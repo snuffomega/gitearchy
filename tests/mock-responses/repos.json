@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "name": "webapp",
+    "full_name": "testuser/webapp",
+    "owner": { "login": "testuser" },
+    "has_pull_requests": true,
+    "html_url": "https://git.example.com/testuser/webapp"
+  },
+  {
+    "id": 2,
+    "name": "api-server",
+    "full_name": "testuser/api-server",
+    "owner": { "login": "testuser" },
+    "has_pull_requests": true,
+    "html_url": "https://git.example.com/testuser/api-server"
+  },
+  {
+    "id": 3,
+    "name": "docs",
+    "full_name": "org/docs",
+    "owner": { "login": "org" },
+    "has_pull_requests": true,
+    "html_url": "https://git.example.com/org/docs"
+  }
+]

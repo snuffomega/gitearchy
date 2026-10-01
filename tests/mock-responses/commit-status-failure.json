@@ -1,0 +1,27 @@
+{
+  "state": "failure",
+  "total_count": 3,
+  "statuses": [
+    {
+      "context": "ci/build",
+      "status": "success",
+      "description": "Build passed",
+      "target_url": "https://git.example.com/testuser/webapp/actions/runs/201",
+      "created_at": "2026-09-15T09:00:00Z"
+    },
+    {
+      "context": "ci/test",
+      "status": "failure",
+      "description": "2 tests failed",
+      "target_url": "https://git.example.com/testuser/webapp/actions/runs/202",
+      "created_at": "2026-09-15T09:05:00Z"
+    },
+    {
+      "context": "ci/lint",
+      "status": "success",
+      "description": "No lint errors",
+      "target_url": "https://git.example.com/testuser/webapp/actions/runs/203",
+      "created_at": "2026-09-15T09:03:00Z"
+    }
+  ]
+}

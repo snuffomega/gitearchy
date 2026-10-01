@@ -1,0 +1,551 @@
+#!/usr/bin/env bash
+# Gitea work-status collector — fetches PRs, reviews, and CI status
+# Writes JSON to $XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json
+# Reads token from $XDG_CONFIG_HOME/gitea-workstatus/credentials
+# Target: Gitea >= 1.19. Actions runs require >= 1.20.
+# Runtime deps: bash, curl, jq (>= 1.6), flock, coreutils
+set -euo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/gitea-workstatus"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gitea-workstatus"
+CRED_FILE="$CONFIG_DIR/credentials"
+OUTPUT="$STATE_DIR/overview.json"
+LOCK_FILE="$STATE_DIR/.collect.lock"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+JQ_SCRIPT="$SCRIPT_DIR/gitea-collect.jq"
+
+MAX_STALE_HOURS="${GITEA_WS_MAX_STALE_HOURS:-6}"
+
+mkdir -p "$STATE_DIR" "$CONFIG_DIR"
+
+# --- flock-based mutual exclusion ---
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "Another collector is running"; exit 0; }
+
+# --- Atomic write: temp + rename ---
+atomic_write() {
+  local dest="$1" content="$2"
+  local tmpfile
+  tmpfile=$(mktemp "${dest}.XXXXXX")
+  printf '%s\n' "$content" > "$tmpfile"
+  mv -f "$tmpfile" "$dest"
+}
+
+# --- Error: preserve last-good data, write error alongside ---
+die() {
+  local message="$1" err
+  err=$(jq -nc --arg error "$message" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{error: $error, ts: $ts}')
+  atomic_write "$STATE_DIR/last-error.json" "$err"
+  if [ ! -f "$OUTPUT" ]; then
+    atomic_write "$OUTPUT" "$err"
+  fi
+  echo "$message" >&2
+  exit 1
+}
+
+if [ ! -f "$CRED_FILE" ]; then
+  die "No credentials file. Create $CRED_FILE with GITEA_URL and GITEA_TOKEN."
+fi
+
+# shellcheck source=/dev/null
+source "$CRED_FILE"
+
+GITEA_URL="${GITEA_URL:-}"
+GITEA_TOKEN="${GITEA_TOKEN:-}"
+
+[ -z "$GITEA_URL" ] && die "GITEA_URL not set in $CRED_FILE"
+[ -z "$GITEA_TOKEN" ] && die "GITEA_TOKEN not set in $CRED_FILE"
+
+GITEA_URL="${GITEA_URL%/}"
+
+# --- API helpers ---
+# api ENDPOINT [PAGE] [LIMIT] [EXTRA_PARAMS]
+# Returns body on stdout. Exit 1 on transport/HTTP failure.
+api() {
+  local endpoint="$1"
+  local page="${2:-1}"
+  local limit="${3:-50}"
+  local extra="${4:-}"
+  local url="${GITEA_URL}/api/v1${endpoint}?page=${page}&limit=${limit}"
+  if [ -n "$extra" ]; then
+    url="${url}&${extra}"
+  fi
+  local response http_code body
+  response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
+    -H "Authorization: token $GITEA_TOKEN" \
+    -H "Accept: application/json" \
+    "$url" 2>/dev/null) || return 1
+
+  http_code=$(echo "$response" | tail -1)
+  body=$(echo "$response" | sed '$d')
+
+  [ "$http_code" = "200" ] || return 1
+  echo "$body"
+}
+
+# api_paginated ENDPOINT LIMIT MAX_PAGES [EXTRA_PARAMS] [COVERAGE_FILE]
+# Prints a merged JSON array. Exit 0 if at least one valid page succeeded.
+# COVERAGE_FILE receives COMPLETE or PARTIAL, which survives command
+# substitution. A full final page is partial because the configured cap may
+# have truncated more results.
+api_paginated() {
+  local endpoint="$1"
+  local limit="${2:-50}"
+  local max_pages="${3:-5}"
+  local extra="${4:-}"
+  local coverage_file="${5:-}"
+  local all="[]"
+  local page=1
+  local pages_ok=0
+  local coverage="COMPLETE"
+
+  while [ "$page" -le "$max_pages" ]; do
+    local url="${GITEA_URL}/api/v1${endpoint}?page=${page}&limit=${limit}"
+    if [ -n "$extra" ]; then
+      url="${url}&${extra}"
+    fi
+    local response
+    if ! response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
+      -H "Authorization: token $GITEA_TOKEN" \
+      -H "Accept: application/json" \
+      "$url" 2>/dev/null); then
+      coverage="PARTIAL"
+      break
+    fi
+
+    local http_code body
+    http_code=$(echo "$response" | tail -1)
+    body=$(echo "$response" | sed '$d')
+
+    if [ "$http_code" != "200" ]; then
+      coverage="PARTIAL"
+      break
+    fi
+
+    local count
+    if ! count=$(echo "$body" | jq -er 'if type == "array" then length else error("expected array") end' 2>/dev/null); then
+      coverage="PARTIAL"
+      break
+    fi
+    [ "$count" -eq 0 ] && { pages_ok=$((pages_ok + 1)); break; }
+
+    all=$(echo "$all" "$body" | jq -s '.[0] + .[1]')
+    pages_ok=$((pages_ok + 1))
+    [ "$count" -lt "$limit" ] && break
+    if [ "$page" -eq "$max_pages" ]; then
+      coverage="PARTIAL"
+      break
+    fi
+    page=$((page + 1))
+  done
+
+  if [ -n "$coverage_file" ]; then
+    printf '%s\n' "$coverage" > "$coverage_file"
+  fi
+  echo "$all"
+  [ "$pages_ok" -gt 0 ] && return 0 || return 1
+}
+
+fetch_user() {
+  api "/user"
+}
+
+fetch_repos() {
+  api_paginated "/user/repos" 50 10 "" "${1:-}"
+}
+
+fetch_prs_for_repo() {
+  local owner="$1" repo="$2" coverage_file="${3:-}"
+  api_paginated "/repos/${owner}/${repo}/pulls" 30 3 "state=open" "$coverage_file"
+}
+
+fetch_reviews_for_pr() {
+  local owner="$1" repo="$2" index="$3" coverage_file="${4:-}"
+  api_paginated "/repos/${owner}/${repo}/pulls/${index}/reviews" 50 3 "" "$coverage_file"
+}
+
+fetch_commit_status() {
+  local owner="$1" repo="$2" sha="$3"
+  api "/repos/${owner}/${repo}/commits/${sha}/status"
+}
+
+fetch_action_runs() {
+  local owner="$1" repo="$2"
+  api "/repos/${owner}/${repo}/actions/runs" 1 20
+}
+
+# fetch_action_runs_with_code: first line is HTTP code or sentinel, rest is body.
+# Never manufacture 404 on transport failure. 404 means "Actions not enabled" (ok).
+# Non-200 HTTP (e.g. 500) and TRANSPORT both mean "failure" (partial).
+fetch_action_runs_with_code() {
+  local owner="$1" repo="$2"
+  local url="${GITEA_URL}/api/v1/repos/${owner}/${repo}/actions/runs?page=1&limit=20"
+  local response http_code
+  if ! response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
+    -H "Authorization: token $GITEA_TOKEN" \
+    -H "Accept: application/json" \
+    "$url" 2>/dev/null); then
+    echo "TRANSPORT"
+    return 0
+  fi
+  http_code=$(echo "$response" | tail -1)
+  echo "${http_code}"
+  echo "$response" | sed '$d'
+  return 0
+}
+
+now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+user_json=$(fetch_user) || die "Cannot authenticate with Gitea"
+username=$(echo "$user_json" | jq -r '.login // empty')
+[ -z "$username" ] && die "Cannot determine username"
+
+repos_json_tmp=$(mktemp)
+repos_coverage_tmp=$(mktemp)
+if ! fetch_repos "$repos_coverage_tmp" > "$repos_json_tmp"; then
+  rm -f "$repos_json_tmp" "$repos_coverage_tmp"
+  die "Cannot list repositories"
+fi
+repos_json=$(cat "$repos_json_tmp")
+repos_coverage=$(cat "$repos_coverage_tmp" 2>/dev/null || echo "PARTIAL")
+rm -f "$repos_json_tmp" "$repos_coverage_tmp"
+
+if ! echo "$repos_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+  die "Unexpected repos response shape"
+fi
+repo_count=$(echo "$repos_json" | jq 'length')
+
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+idx=0
+repo_attempted=0
+worker_pids=()
+worker_repos=()
+
+wait_for_workers() {
+  local pid worker_index failed=0
+  local failed_repos=()
+  for worker_index in "${!worker_pids[@]}"; do
+    pid="${worker_pids[$worker_index]}"
+    if ! wait "$pid"; then
+      failed=1
+      failed_repos+=("${worker_repos[$worker_index]}")
+    fi
+  done
+  worker_pids=()
+  worker_repos=()
+  [ "$failed" -eq 0 ] || die "Repository collection worker failed: $(IFS=', '; echo "${failed_repos[*]}")"
+}
+
+for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
+  decoded=$(echo "$row" | base64 -d)
+  owner=$(echo "$decoded" | jq -r '.owner.login')
+  repo=$(echo "$decoded" | jq -r '.name')
+  has_prs=$(echo "$decoded" | jq -r 'if has("has_pull_requests") then .has_pull_requests else true end')
+  is_empty=$(echo "$decoded" | jq -r '.empty == true')
+
+  repo_attempted=$((repo_attempted + 1))
+  echo "$owner/$repo" >> "$tmpdir/repos_list"
+
+    (
+    repo_status="ok"
+
+    # Track which resources this repo failed on, for explicit reporting.
+    resource_failed=0
+
+    # Fetch PRs (skip if repo has PRs disabled)
+    if [ "$has_prs" != "false" ] && [ "$is_empty" != "true" ]; then
+      prs_ok=true
+      pr_coverage_file="$tmpdir/pr_coverage_${idx}"
+      prs=$(fetch_prs_for_repo "$owner" "$repo" "$pr_coverage_file" 2>/dev/null) || prs_ok=false
+      if [ "$prs_ok" = "true" ] && echo "$prs" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        [ "$(cat "$pr_coverage_file" 2>/dev/null || echo PARTIAL)" = "COMPLETE" ] || prs_ok=false
+      else
+        prs_ok=false
+      fi
+
+      if [ "$prs_ok" = "true" ]; then
+        pr_count=$(echo "$prs" | jq 'length')
+
+        for i in $(seq 0 $((pr_count - 1))); do
+          pr_index=$(echo "$prs" | jq -r ".[$i].number")
+          pr_sha=$(echo "$prs" | jq -r ".[$i].head.sha // empty")
+
+          reviews="[]"
+          review_coverage_file="$tmpdir/review_coverage_${idx}_${pr_index}"
+          if revs_tmp=$(fetch_reviews_for_pr "$owner" "$repo" "$pr_index" "$review_coverage_file" 2>/dev/null) && \
+             echo "$revs_tmp" | jq -e 'type == "array"' >/dev/null 2>&1 && \
+             [ "$(cat "$review_coverage_file" 2>/dev/null || echo PARTIAL)" = "COMPLETE" ]; then
+            reviews="$revs_tmp"
+          else
+            echo "review:${pr_index}" >> "$tmpdir/resources_${idx}"
+            resource_failed=1
+            repo_status="partial"
+          fi
+
+          commit_status="{}"
+          if [ -n "$pr_sha" ]; then
+            if cs_tmp=$(fetch_commit_status "$owner" "$repo" "$pr_sha" 2>/dev/null) && \
+               echo "$cs_tmp" | jq -e 'type == "object"' >/dev/null 2>&1; then
+              commit_status="$cs_tmp"
+            else
+              echo "status:${pr_index}" >> "$tmpdir/resources_${idx}"
+              resource_failed=1
+              repo_status="partial"
+            fi
+          fi
+
+          prs=$(echo "$prs" | jq --argjson idx "$i" \
+            --argjson revs "$reviews" \
+            --argjson cs "$commit_status" \
+            '.[$idx]._reviews = $revs | .[$idx]._commit_status = $cs')
+        done
+
+        prs=$(echo "$prs" | jq --arg fn "${owner}/${repo}" '[.[] | . + {"_repo": $fn}]')
+      else
+        prs="[]"
+        echo "prs" >> "$tmpdir/resources_${idx}"
+        resource_failed=1
+        repo_status="partial"
+      fi
+    else
+      prs="[]"
+    fi
+
+    echo "$prs" > "$tmpdir/prs_${idx}.json"
+
+    # Always attempt Actions runs regardless of has_pull_requests.
+    # Only HTTP 404 means "Actions not enabled" (ok). Anything else
+    # non-200 (500, TRANSPORT failure, etc.) is a failure -> partial.
+    runs_output=$(fetch_action_runs_with_code "$owner" "$repo")
+    runs_http_code="${runs_output%%$'\n'*}"
+    runs_raw="${runs_output#*$'\n'}"
+
+    if [ "$runs_http_code" = "200" ] && [ -n "$runs_raw" ] && \
+       echo "$runs_raw" | jq -e '.workflow_runs | type == "array"' >/dev/null 2>&1; then
+      echo "$runs_raw" | jq --arg fn "${owner}/${repo}" \
+        '[.workflow_runs[]? | . + {"_repo": $fn}]' > "$tmpdir/runs_${idx}.json"
+    elif [ "$runs_http_code" = "200" ] && [ -n "$runs_raw" ] && echo "$runs_raw" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      echo "$runs_raw" | jq --arg fn "${owner}/${repo}" \
+        '[.[]? | . + {"_repo": $fn}]' > "$tmpdir/runs_${idx}.json"
+    else
+      echo "[]" > "$tmpdir/runs_${idx}.json"
+      if [ "$runs_http_code" != "404" ]; then
+        echo "runs" >> "$tmpdir/resources_${idx}"
+        resource_failed=1
+        repo_status="partial"
+      fi
+    fi
+
+    echo "$repo_status" > "$tmpdir/status_${idx}"
+    [ -f "$tmpdir/resources_${idx}" ] || touch "$tmpdir/resources_${idx}"
+  ) &
+  worker_pids+=("$!")
+  worker_repos+=("${owner}/${repo}")
+
+  idx=$((idx + 1))
+
+  if [ $((idx % 8)) -eq 0 ]; then
+    wait_for_workers
+  fi
+done
+
+wait_for_workers
+
+# Read previous snapshot for carry-forward + staleness
+prev_ts=""
+hours_old=99999
+if [ -f "$OUTPUT" ]; then
+  prev_ts=$(jq -r '.meta.collected_at // empty' "$OUTPUT" 2>/dev/null)
+  if [ -n "$prev_ts" ]; then
+    prev_epoch=$(date -d "$prev_ts" +%s 2>/dev/null || echo 0)
+    now_epoch=$(date +%s)
+    hours_old=$(( (now_epoch - prev_epoch) / 3600 ))
+  fi
+fi
+
+# Per-resource, per-repo carry-forward and metadata collection.
+all_prs="[]"
+all_runs="[]"
+carried_repos="[]"
+failed_pr_repos="[]"
+failed_run_repos="[]"
+failed_review_keys="[]"
+failed_status_keys="[]"
+carry_pr_repos="[]"
+carry_run_repos="[]"
+carry_review_keys="[]"
+carry_status_keys="[]"
+failed_meta="{}"
+repo_failed=0
+
+idx=0
+if [ -f "$tmpdir/repos_list" ]; then
+  while read -r fn; do
+    [ -z "$fn" ] && { idx=$((idx+1)); continue; }
+    repo_prs=$(cat "$tmpdir/prs_${idx}.json" 2>/dev/null || echo "[]")
+    repo_runs=$(cat "$tmpdir/runs_${idx}.json" 2>/dev/null || echo "[]")
+    repo_status=$(cat "$tmpdir/status_${idx}" 2>/dev/null || echo "ok")
+
+    lift_resources="[]"
+    if [ "$repo_status" != "ok" ]; then
+      repo_failed=$((repo_failed+1))
+    fi
+    if [ -f "$tmpdir/resources_${idx}" ]; then
+      while read -r res; do
+        case "$res" in
+          prs) failed_pr_repos=$(echo "$failed_pr_repos" | jq --arg fn "$fn" '. + [$fn] | unique') ;;
+          runs) failed_run_repos=$(echo "$failed_run_repos" | jq --arg fn "$fn" '. + [$fn] | unique') ;;
+          review:*)
+            pr_id="${res#*:}"
+            failed_review_keys=$(echo "$failed_review_keys" | jq --arg fn "$fn" --argjson id "$pr_id" \
+              '. + [{repo: $fn, id: $id}] | unique_by([.repo, .id])')
+            ;;
+          status:*)
+            pr_id="${res#*:}"
+            failed_status_keys=$(echo "$failed_status_keys" | jq --arg fn "$fn" --argjson id "$pr_id" \
+              '. + [{repo: $fn, id: $id}] | unique_by([.repo, .id])')
+            ;;
+        esac
+        lift_resources=$(echo "$lift_resources" | jq --arg r "$res" '. + [$r]')
+      done < "$tmpdir/resources_${idx}"
+    fi
+    # Merge per-repo results.
+    all_prs=$(echo "$all_prs" "$repo_prs" | jq -s '.[0] + .[1]')
+    all_runs=$(echo "$all_runs" "$repo_runs" | jq -s '.[0] + .[1]')
+    if [ "$lift_resources" != "[]" ]; then
+      failed_meta=$(echo "$failed_meta" | jq --arg fn "$fn" --argjson bad "$lift_resources" '.[$fn] = $bad')
+    fi
+    idx=$((idx+1))
+  done < "$tmpdir/repos_list"
+fi
+
+incomplete=false
+if [ "$repos_coverage" = "PARTIAL" ] || [ "$repo_failed" -gt 0 ]; then incomplete=true; fi
+carried=false
+can_carry=false
+if [ -n "$prev_ts" ] && [ "$hours_old" -lt "$MAX_STALE_HOURS" ]; then
+  can_carry=true
+fi
+
+if [ "$can_carry" = "true" ]; then
+  for fn in $(echo "$failed_pr_repos" | jq -r '.[]'); do
+    if jq -e --arg fn "$fn" 'any(.sections.all_prs[]?; .repo == $fn)' "$OUTPUT" >/dev/null; then
+      carry_pr_repos=$(echo "$carry_pr_repos" | jq --arg fn "$fn" '. + [$fn] | unique')
+    fi
+  done
+  for fn in $(echo "$failed_run_repos" | jq -r '.[]'); do
+    if jq -e --arg fn "$fn" 'any((.sections.running[]?, .sections.recently_completed[]?); .repo == $fn)' "$OUTPUT" >/dev/null; then
+      carry_run_repos=$(echo "$carry_run_repos" | jq --arg fn "$fn" '. + [$fn] | unique')
+    fi
+  done
+  for key in $(echo "$failed_review_keys" | jq -r '.[] | @base64'); do
+    decoded_key=$(echo "$key" | base64 -d)
+    fn=$(echo "$decoded_key" | jq -r '.repo')
+    pr_id=$(echo "$decoded_key" | jq -r '.id')
+    lift_review=$(jq -c --arg fn "$fn" --argjson id "$pr_id" \
+      'first(.sections.all_prs[]? | select(.repo == $fn and .id == $id) | .reviews) // null' "$OUTPUT")
+    if [ "$lift_review" != "null" ] && echo "$all_prs" | jq -e --arg fn "$fn" --argjson id "$pr_id" \
+      'any(.[]; ._repo == $fn and .number == $id)' >/dev/null; then
+      all_prs=$(echo "$all_prs" | jq --arg fn "$fn" --argjson id "$pr_id" --argjson lift "$lift_review" \
+        'map(if ._repo == $fn and .number == $id then . + {"_review_summary": $lift} else . end)')
+      carry_review_keys=$(echo "$carry_review_keys" | jq --arg fn "$fn" --argjson id "$pr_id" \
+        '. + [{repo: $fn, id: $id}] | unique_by([.repo, .id])')
+    fi
+  done
+  for key in $(echo "$failed_status_keys" | jq -r '.[] | @base64'); do
+    decoded_key=$(echo "$key" | base64 -d)
+    fn=$(echo "$decoded_key" | jq -r '.repo')
+    pr_id=$(echo "$decoded_key" | jq -r '.id')
+    lift_ci=$(jq -c --arg fn "$fn" --argjson id "$pr_id" \
+      'first(.sections.all_prs[]? | select(.repo == $fn and .id == $id) | .ci) // null' "$OUTPUT")
+    if [ "$lift_ci" != "null" ] && echo "$all_prs" | jq -e --arg fn "$fn" --argjson id "$pr_id" \
+      'any(.[]; ._repo == $fn and .number == $id)' >/dev/null; then
+      all_prs=$(echo "$all_prs" | jq --arg fn "$fn" --argjson id "$pr_id" --argjson lift "$lift_ci" \
+        'map(if ._repo == $fn and .number == $id then . + {"_ci_summary": $lift} else . end)')
+      carry_status_keys=$(echo "$carry_status_keys" | jq --arg fn "$fn" --argjson id "$pr_id" \
+        '. + [{repo: $fn, id: $id}] | unique_by([.repo, .id])')
+    fi
+  done
+fi
+
+if [ "$carry_pr_repos" != "[]" ] || [ "$carry_run_repos" != "[]" ] || \
+   [ "$carry_review_keys" != "[]" ] || [ "$carry_status_keys" != "[]" ]; then
+  carried=true
+  carried_repos=$(echo "$carry_pr_repos" "$carry_run_repos" "$carry_review_keys" "$carry_status_keys" | jq -s \
+    '[.[0][], .[1][], (.[2][] | .repo), (.[3][] | .repo)] | unique')
+fi
+
+# If coverage is incomplete, preserve last-good and report staleness explicitly.
+if [ "$repos_coverage" = "PARTIAL" ] && [ -n "$prev_ts" ] && [ "$hours_old" -lt "$MAX_STALE_HOURS" ]; then
+  stale_tmp=$(mktemp "$OUTPUT.XXXXXX")
+  jq --arg ts "$now_ts" '.meta.stale = true | .meta.stale_since = $ts' "$OUTPUT" > "$stale_tmp"
+  mv -f "$stale_tmp" "$OUTPUT"
+  echo "Stale carry-forward (incomplete coverage)"
+  exit 0
+fi
+
+printf '%s\n' "$all_prs" > "$tmpdir/all_prs.json"
+printf '%s\n' "$all_runs" > "$tmpdir/all_runs.json"
+
+overview=$(jq -n \
+  --arg url "$GITEA_URL" \
+  --arg user "$username" \
+  --arg ts "$now_ts" \
+  --slurpfile prs "$tmpdir/all_prs.json" \
+  --slurpfile runs "$tmpdir/all_runs.json" \
+  --argjson repo_count "$repo_count" \
+  --argjson max_stale "$MAX_STALE_HOURS" \
+  --argjson repo_failed "$repo_failed" \
+  --argjson repo_attempted "$repo_attempted" \
+  --argjson incomplete "$incomplete" \
+  --argjson carried "$carried" \
+  --argjson failed_resources "$failed_meta" \
+  --argjson carried_repos "$carried_repos" \
+  -f "$JQ_SCRIPT")
+
+# Post-transform splice: previous data is already transformed. Replace only
+# the resource that failed, then rebuild every derived section and count.
+if [ "$carried" = "true" ]; then
+  for fn in $(echo "$carry_pr_repos" | jq -r '.[]'); do
+    lift_prs=$(jq -c --arg fn "$fn" '[.sections.all_prs[]? | select(.repo == $fn)]' "$OUTPUT")
+    overview=$(echo "$overview" | jq --arg fn "$fn" --argjson lift "$lift_prs" \
+      '.sections.all_prs = ([.sections.all_prs[] | select(.repo != $fn)] + $lift)')
+  done
+  for fn in $(echo "$carry_run_repos" | jq -r '.[]'); do
+    lift_runs=$(jq -c --arg fn "$fn" '(.sections.running // []) + (.sections.recently_completed // []) | map(select(.repo == $fn))' "$OUTPUT")
+    overview=$(echo "$overview" | jq --arg fn "$fn" --argjson lift "$lift_runs" '
+      .sections.running = ([.sections.running[] | select(.repo != $fn)] + [$lift[] | select(.bucket == "running")]) |
+      .sections.recently_completed = ([.sections.recently_completed[] | select(.repo != $fn)] + [$lift[] | select(.bucket != "running")])
+    ')
+  done
+  overview=$(echo "$overview" | jq --arg user "$username" '
+    .sections.all_prs |= (unique_by([.repo, .id]) | sort_by(.updated) | reverse) |
+    .sections.attention = [.sections.all_prs[] | select(.needs_attention)] |
+    .sections.my_prs = [.sections.all_prs[] | select(.author == $user)] |
+    .sections.review_queue = [.sections.all_prs[] | select(.requested_reviewers | index($user) != null)] |
+    .sections.running |= (unique_by([.repo, .id]) | sort_by(.updated) | reverse) |
+    .sections.recently_completed |= (unique_by([.repo, .id]) | sort_by(.updated) | reverse | .[0:20]) |
+    .summary.open_prs = (.sections.all_prs | length) |
+    .summary.needs_attention = (.sections.attention | length) |
+    .summary.review_requested = ([.sections.all_prs[] | select(.status_label == "review_requested")] | length) |
+    .summary.ci_failed = ([.sections.all_prs[] | select(.status_label == "ci_failed")] | length) |
+    .summary.changes_requested = ([.sections.all_prs[] | select(.status_label == "changes_requested")] | length) |
+    .summary.ready_to_merge = ([.sections.all_prs[] | select(.status_label == "approved_ci_passed")] | length) |
+    .summary.running_jobs = (.sections.running | length) |
+    .repos = (([.sections.all_prs[].repo] + [.sections.running[].repo] + [.sections.recently_completed[].repo]) | unique | sort)
+  ')
+fi
+
+# Every fetched repository, active or not, for the widget's repo picker.
+[ -f "$tmpdir/repos_list" ] || : > "$tmpdir/repos_list"
+overview=$(echo "$overview" | jq --rawfile names "$tmpdir/repos_list" \
+  '.known_repos = ($names | split("\n") | map(select(length > 0)) | unique)')
+
+atomic_write "$OUTPUT" "$overview"
+rm -f "$STATE_DIR/last-error.json"
+pr_count_now=$(echo "$overview" | jq '.summary.open_prs')
+run_count_now=$(echo "$overview" | jq '[.sections.running[]?, .sections.recently_completed[]?] | length')
+echo "Collected: $pr_count_now PRs, $run_count_now workflow runs ($repo_failed/$repo_attempted repos partial) at $now_ts"

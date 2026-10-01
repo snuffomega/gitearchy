@@ -1,0 +1,16 @@
+[
+  {
+    "id": 10,
+    "user": { "login": "reviewer1" },
+    "state": "REQUEST_CHANGES",
+    "body": "Needs error handling",
+    "submitted_at": "2026-09-14T12:00:00Z"
+  },
+  {
+    "id": 11,
+    "user": { "login": "reviewer1" },
+    "state": "APPROVED",
+    "body": "Looks good now",
+    "submitted_at": "2026-09-15T06:00:00Z"
+  }
+]

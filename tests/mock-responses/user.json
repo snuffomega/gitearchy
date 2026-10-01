@@ -1,0 +1,7 @@
+{
+  "id": 1,
+  "login": "testuser",
+  "full_name": "Test User",
+  "email": "test@example.com",
+  "avatar_url": "https://git.example.com/avatars/1"
+}

@@ -1,0 +1,59 @@
+{
+  "total_count": 3,
+  "workflow_runs": [
+    {
+      "id": 501,
+      "name": "CI Pipeline",
+      "workflow_id": "ci.yaml",
+      "status": "running",
+      "conclusion": null,
+      "head_branch": "feature/auth",
+      "head_sha": "abc123def456",
+      "event": "push",
+      "created_at": "2026-09-15T09:30:00Z",
+      "updated_at": "2026-09-15T09:32:00Z",
+      "run_started_at": "2026-09-15T09:30:05Z",
+      "html_url": "https://git.example.com/testuser/webapp/actions/runs/501",
+      "repository": {
+        "id": 1,
+        "full_name": "testuser/webapp"
+      }
+    },
+    {
+      "id": 500,
+      "name": "CI Pipeline",
+      "workflow_id": "ci.yaml",
+      "status": "success",
+      "conclusion": "success",
+      "head_branch": "main",
+      "head_sha": "def789ghi012",
+      "event": "push",
+      "created_at": "2026-09-15T08:00:00Z",
+      "updated_at": "2026-09-15T08:12:00Z",
+      "run_started_at": "2026-09-15T08:00:02Z",
+      "html_url": "https://git.example.com/testuser/webapp/actions/runs/500",
+      "repository": {
+        "id": 1,
+        "full_name": "testuser/webapp"
+      }
+    },
+    {
+      "id": 499,
+      "name": "Deploy",
+      "workflow_id": "deploy.yaml",
+      "status": "failure",
+      "conclusion": "failure",
+      "head_branch": "main",
+      "head_sha": "xyz999aaa111",
+      "event": "push",
+      "created_at": "2026-09-14T22:00:00Z",
+      "updated_at": "2026-09-14T22:05:00Z",
+      "run_started_at": "2026-09-14T22:00:01Z",
+      "html_url": "https://git.example.com/testuser/webapp/actions/runs/499",
+      "repository": {
+        "id": 1,
+        "full_name": "testuser/webapp"
+      }
+    }
+  ]
+}

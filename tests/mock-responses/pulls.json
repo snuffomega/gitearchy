@@ -1,0 +1,86 @@
+[
+  {
+    "number": 42,
+    "title": "Add user authentication flow",
+    "state": "open",
+    "draft": false,
+    "user": { "login": "testuser", "avatar_url": "https://git.example.com/avatars/1" },
+    "head": { "ref": "feature/auth", "sha": "abc123def456" },
+    "base": { "ref": "main" },
+    "created_at": "2026-09-14T10:00:00Z",
+    "updated_at": "2026-09-15T08:30:00Z",
+    "html_url": "https://git.example.com/testuser/webapp/pulls/42",
+    "mergeable": true,
+    "labels": [
+      { "name": "enhancement", "color": "0075ca" },
+      { "name": "needs-review", "color": "e4e669" }
+    ],
+    "requested_reviewers": [
+      { "login": "reviewer1" }
+    ]
+  },
+  {
+    "number": 43,
+    "title": "Fix database connection pooling",
+    "state": "open",
+    "draft": false,
+    "user": { "login": "agent-bot", "avatar_url": "https://git.example.com/avatars/5" },
+    "head": { "ref": "fix/db-pool", "sha": "def789ghi012" },
+    "base": { "ref": "main" },
+    "created_at": "2026-09-15T06:00:00Z",
+    "updated_at": "2026-09-15T09:15:00Z",
+    "html_url": "https://git.example.com/testuser/webapp/pulls/43",
+    "mergeable": true,
+    "labels": [
+      { "name": "bug", "color": "d73a4a" }
+    ],
+    "requested_reviewers": [
+      { "login": "testuser" }
+    ]
+  },
+  {
+    "number": 10,
+    "title": "WIP: Refactor config loader",
+    "state": "open",
+    "draft": true,
+    "user": { "login": "testuser", "avatar_url": "https://git.example.com/avatars/1" },
+    "head": { "ref": "refactor/config", "sha": "xyz999aaa111" },
+    "base": { "ref": "main" },
+    "created_at": "2026-09-13T14:00:00Z",
+    "updated_at": "2026-09-14T16:00:00Z",
+    "html_url": "https://git.example.com/testuser/api-server/pulls/10",
+    "mergeable": true,
+    "labels": [],
+    "requested_reviewers": []
+  },
+  {
+    "number": 44,
+    "title": "Update docs for API v2",
+    "state": "open",
+    "draft": false,
+    "user": { "login": "testuser", "avatar_url": "https://git.example.com/avatars/1" },
+    "head": { "ref": "docs/v2", "sha": "mmm111nnn222" },
+    "base": { "ref": "main" },
+    "created_at": "2026-09-15T07:00:00Z",
+    "updated_at": "2026-09-15T09:00:00Z",
+    "html_url": "https://git.example.com/testuser/webapp/pulls/44",
+    "mergeable": false,
+    "labels": [],
+    "requested_reviewers": []
+  },
+  {
+    "number": 45,
+    "title": "Add caching layer",
+    "state": "open",
+    "draft": false,
+    "user": { "login": "testuser", "avatar_url": "https://git.example.com/avatars/1" },
+    "head": { "ref": "feat/cache", "sha": "ooo333ppp444" },
+    "base": { "ref": "main" },
+    "created_at": "2026-09-15T08:00:00Z",
+    "updated_at": "2026-09-15T09:30:00Z",
+    "html_url": "https://git.example.com/testuser/webapp/pulls/45",
+    "mergeable": null,
+    "labels": [],
+    "requested_reviewers": []
+  }
+]

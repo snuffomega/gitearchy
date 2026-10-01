@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.snuffomega.gitearchy",
+  "name": "Gitearchy",
+  "version": "1.1.0",
+  "description": "Monitor PRs, reviews, and CI across your self-hosted Gitea repos (>= 1.19)",
+  "author": "Casita Labs",
+  "license": "MIT",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Gitearchy",
+    "category": "Development",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 180,
+      "giteaUrl": "",
+      "maxStaleHours": 6,
+      "notifyOnFailure": true,
+      "notifyOnReviewRequest": true,
+      "mutedRepos": "",
+      "hiddenRepos": []
+    },
+    "schema": [
+      { "key": "refreshIntervalSec", "type": "integer", "label": "Refresh interval (seconds)" },
+      { "key": "giteaUrl", "type": "string", "label": "Gitea base URL (e.g. https://git.example.com)" },
+      { "key": "maxStaleHours", "type": "integer", "label": "Hours before stale data is hidden" },
+      { "key": "notifyOnFailure", "type": "boolean", "label": "Notify on CI failure" },
+      { "key": "notifyOnReviewRequest", "type": "boolean", "label": "Notify on review request" },
+      { "key": "mutedRepos", "type": "string", "label": "Legacy hidden repos (comma-separated owner/repo); still notify" },
+      { "key": "hiddenRepos", "type": "array", "label": "Repos hidden from the bar and panel, chosen in the panel; still notify" }
+    ]
+  }
+}
