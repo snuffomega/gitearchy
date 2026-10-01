@@ -45,13 +45,20 @@ omarchy plugin enable io.github.snuffomega.gitearchy
 2. **Save your credentials.** They live outside the plugin, readable only by you:
 
    ```bash
-   mkdir -p ~/.config/gitea-workstatus
-   cat > ~/.config/gitea-workstatus/credentials << 'EOF'
+   (
+     umask 077
+     mkdir -p ~/.config/gitea-workstatus
+     chmod 700 ~/.config/gitea-workstatus
+     touch ~/.config/gitea-workstatus/credentials
+     chmod 600 ~/.config/gitea-workstatus/credentials
+     cat > ~/.config/gitea-workstatus/credentials << 'EOF'
    GITEA_URL="https://git.example.com"
    GITEA_TOKEN="your-gitea-api-token"
    EOF
-   chmod 600 ~/.config/gitea-workstatus/credentials
+   )
    ```
+
+   Use an `https://` URL when you can. With `http://`, the token crosses your network unencrypted, so anyone who can watch that traffic can read it. That's a common trade-off for a Gitea on a home LAN, and it's why the token should only have the read scopes above.
 
 3. **Restart the shell:** `omarchy restart shell`. The widget appears in the bar and fills in after its first refresh.
 
@@ -128,6 +135,7 @@ Settings live on the widget's entry in `~/.config/omarchy/shell.json`.
 
 - **`!` in the bar:** the last refresh failed. Open the panel to see why; a missing credentials file, a wrong URL or an expired token are the usual causes.
 - **Nothing shows up:** check that the credentials file exists and that the token has the three read scopes, then press `r` in the panel.
+- **Clicking a PR or job does nothing:** the panel only opens links on the `GITEA_URL` you configured. If Gitea's own links use a different address (its `ROOT_URL`), set `GITEA_URL` to that address.
 - **You edited the plugin and nothing changed:** Omarchy's hot reload doesn't always pick up panel files. Run `omarchy restart shell`.
 - **"Ready" isn't mergeable:** Gitea doesn't expose branch-protection rules through its API, so an approved PR with green CI can still be blocked by a required check. The merge button in Gitea has the final word.
 
@@ -184,8 +192,8 @@ bash tests/run-all.sh
 | Suite | Covers |
 |-------|--------|
 | `test-jq-transform.sh` | PR classification, draft, conflict and mergeability guards, latest review per reviewer, blockers, CI summaries, legacy and current Actions run shapes, section bucketing |
-| `test-model.sh` | Section and focus filtering, hidden repos leaving counts but still notifying, the repo picker, per-repo stale policy, cold-start suppression, per-item notification transitions, run failures |
-| `test-collector-validation.sh` | Exit codes, malformed and partial responses, pagination, per-resource carry-forward, stale metadata, the full repo list, PR-disabled repos, transport failures, lock contention |
+| `test-model.sh` | Section and focus filtering, hidden repos leaving counts but still notifying, the repo picker, per-repo stale policy, cold-start suppression, per-item notification transitions, run failures, escaped notification text, links limited to your Gitea |
+| `test-collector-validation.sh` | Exit codes, malformed and partial responses, pagination, per-resource carry-forward, stale metadata, the full repo list, PR-disabled repos, transport failures, lock contention, hostile-server and local-user hardening (curl isolation, no URL globbing, unsafe repo names, private data out of argv, private lock) |
 | `test-plain-text.sh` | Every text label renders as plain text, so markup in a PR title, repo or job name is shown literally and never fetched |
 
 Not covered offline: manifest validity (`omarchy plugin validate .`), a live Gitea server, desktop notifications, and anything that needs a click in the running bar.

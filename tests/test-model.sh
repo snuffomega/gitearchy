@@ -77,7 +77,7 @@ overview2_json=$(echo "$overview2" | jq -c .)
 
 # Build a third overview where a NEW PR (#99) has CI failure (total count = 1 again)
 overview3_prs=$(echo "$overview2_prs" | jq '. + [{
-  "number": 99, "title": "New broken PR", "state": "open", "draft": false,
+  "number": 99, "title": "New <b>broken</b> PR & co", "state": "open", "draft": false,
   "user": {"login": "someone"}, "head": {"ref": "broken", "sha": "zzz"},
   "base": {"ref": "main"}, "created_at": "2026-09-15T10:06:00Z",
   "updated_at": "2026-09-15T10:06:00Z", "html_url": "https://git.example.com/testuser/webapp/pulls/99",
@@ -241,6 +241,8 @@ const notes3 = getNewNotifications(true, true);
 const newFailNotes = notes3.filter(n => n.type === "failure");
 assert("new PR failure: fires notification", true, newFailNotes.length > 0);
 assert("new PR failure: mentions PR 99", true, newFailNotes.some(n => n.message.indexOf("#99") !== -1));
+assert("notification markup is escaped", true,
+  newFailNotes.some(n => n.message.indexOf("New &lt;b&gt;broken&lt;/b&gt; PR &amp; co") !== -1));
 
 console.log("");
 console.log("Test: Disabled notification kinds stay silent but remember state");
@@ -339,6 +341,31 @@ console.log("");
 console.log("Test: timeAgo");
 assert("null input", "", timeAgo(null));
 assert("empty input", "", timeAgo(""));
+
+console.log("");
+console.log("Test: Only links on the configured Gitea open");
+parseOverview(JSON.stringify($overview_json));
+assert("same-origin PR link opens", "https://git.example.com/testuser/webapp/pulls/1",
+  safeUrl("https://git.example.com/testuser/webapp/pulls/1"));
+assert("other host is refused", "", safeUrl("https://evil.example.net/testuser/webapp/pulls/1"));
+assert("look-alike host is refused", "", safeUrl("https://git.example.com.evil.net/x"));
+assert("userinfo trick is refused", "", safeUrl("https://git.example.com@evil.net/x"));
+assert("other scheme is refused", "", safeUrl("file:///etc/passwd"));
+assert("non-string is refused", "", safeUrl(null));
+assert("repo page opens", "https://git.example.com/testuser/webapp", repoUrl("testuser/webapp"));
+assert("odd repo name is refused", "", repoUrl("../../evil"));
+parseOverview(JSON.stringify(Object.assign($overview_json, { meta: Object.assign({}, $overview_json.meta, { gitea_url: "https://host.example/gitea" }) })));
+assert("sub-path install opens its own links", "https://host.example/gitea/a/b/pulls/2", safeUrl("https://host.example/gitea/a/b/pulls/2"));
+assert("sub-path install refuses the bare host", "", safeUrl("https://host.example/other/x"));
+parseOverview(JSON.stringify(Object.assign($overview_json, { meta: Object.assign({}, $overview_json.meta, { gitea_url: "https://Git.Example.com:443" }) })));
+assert("host case and default port are the same Gitea", "https://git.example.com/a/b/pulls/3", safeUrl("https://git.example.com/a/b/pulls/3"));
+assert("explicit default port on the link is the same Gitea", "https://GIT.example.com:443/a/b", safeUrl("https://GIT.example.com:443/a/b"));
+assert("a different port is another origin", "", safeUrl("https://git.example.com:8443/a/b"));
+assert("a different scheme is another origin", "", safeUrl("http://git.example.com/a/b"));
+parseOverview(JSON.stringify(Object.assign($overview_json, { meta: Object.assign({}, $overview_json.meta, { gitea_url: "http://[fd00::10]:3000" }) })));
+assert("IPv6 literal Gitea opens its links", "http://[fd00::10]:3000/a/b/pulls/4", safeUrl("http://[fd00::10]:3000/a/b/pulls/4"));
+assert("IPv6 literal Gitea opens repo pages", "http://[fd00::10]:3000/a/b", repoUrl("a/b"));
+assert("another IPv6 host is refused", "", safeUrl("http://[fd00::11]:3000/a/b"));
 
 console.log("");
 console.log("Test: statusIcon coverage");

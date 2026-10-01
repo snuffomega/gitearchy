@@ -70,14 +70,13 @@ Ui.PopupCard {
     function openSelected() {
         if (selectedIndex < 0 || selectedIndex >= listModel.count) return;
         var item = JSON.parse(listModel.get(selectedIndex).itemData);
-        if (item.url) Qt.openUrlExternally(item.url);
+        var url = Model.safeUrl(item.url);
+        if (url) Qt.openUrlExternally(url);
     }
 
     function openRepo(repo) {
-        var meta = Model.getMeta();
-        if (meta && meta.gitea_url && repo) {
-            Qt.openUrlExternally(meta.gitea_url + "/" + repo);
-        }
+        var url = Model.repoUrl(repo);
+        if (url) Qt.openUrlExternally(url);
     }
 
     onDataRevChanged: populateList()
@@ -412,7 +411,7 @@ Ui.PopupCard {
                             var meta = Model.getMeta();
                             return meta ? meta.gitea_url : "";
                         }
-                        onOpenPr: Qt.openUrlExternally(entry.url)
+                        onOpenPr: { var url = Model.safeUrl(entry.url); if (url) Qt.openUrlExternally(url); }
                         onOpenRepo: panel.openRepo(entry.repo)
                     }
                 }
@@ -422,7 +421,7 @@ Ui.PopupCard {
                     JobRow {
                         entry: parsedData
                         selected: isSelected
-                        onOpenJob: Qt.openUrlExternally(entry.url)
+                        onOpenJob: { var url = Model.safeUrl(entry.url); if (url) Qt.openUrlExternally(url); }
                         onOpenRepo: panel.openRepo(entry.repo)
                     }
                 }

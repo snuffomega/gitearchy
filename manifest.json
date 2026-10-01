@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.snuffomega.gitearchy",
   "name": "Gitearchy",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "Monitor PRs, reviews, and CI across your self-hosted Gitea repos (>= 1.19)",
   "author": "Casita Labs",
   "license": "MIT",

@@ -54,7 +54,7 @@ setup_env() {
 
 # Creates a mock curl that returns status code and body based on path matching
 # Usage: make_mock_curl <tmpdir> <behavior>
-# behavior: "normal" | "500_repos" | "401_auth" | "malformed" | "timeout" | "pr_fail" | "actions_only" | "large_actions"
+# behavior: "normal" | "hostile" | "500_repos" | "401_auth" | "malformed" | "timeout" | "pr_fail" | "actions_only" | "large_actions"
 make_mock_curl() {
   local tmpdir="$1" behavior="$2"
   cat > "$tmpdir/curl" << ENDCURL
@@ -126,6 +126,20 @@ case "$behavior" in
         jq -n '{workflow_runs: [range(20) | {id: ., name: "CI", status: "success", conclusion: "success", head_branch: "main", event: "push", created_at: "2026-09-15T09:30:00Z", updated_at: "2026-09-15T09:32:00Z", html_url: "https://mock.test/run", padding: ("x" * 20000)}]}'
         \$has_write_out && printf '\n200'
         ;;
+      *) echo '[]'; \$has_write_out && printf '\n200' ;;
+    esac
+    ;;
+  hostile)
+    case "\$path" in
+      /user) cat "\$mock_dir/user.json"; \$has_write_out && printf '\n200' ;;
+      /user/repos) echo '[{"owner":{"login":"testuser"},"name":"webapp"},{"owner":{"login":"[1-3]"},"name":"glob"}]'; \$has_write_out && printf '\n200' ;;
+      /repos/*/pulls) jq '[.[0]]' "\$mock_dir/pulls.json"; \$has_write_out && printf '\n200' ;;
+      /repos/*/pulls/*/reviews)
+        jq -n '[range(20) | {id: ., user: {login: "rev"}, state: "COMMENT", submitted_at: "2026-09-15T09:30:00Z", body: ("SECRET-" + "REVIEW-BODY " + ("x" * 8192))}]'
+        \$has_write_out && printf '\n200'
+        ;;
+      /repos/*/commits/*/status) cat "\$mock_dir/commit-status-success.json"; \$has_write_out && printf '\n200' ;;
+      /repos/*/actions/runs) cat "\$mock_dir/action-runs.json"; \$has_write_out && printf '\n200' ;;
       *) echo '[]'; \$has_write_out && printf '\n200' ;;
     esac
     ;;
@@ -803,6 +817,75 @@ assert_eq "large Actions response publishes all runs" "20" \
   "$(jq '[.sections.running[]?, .sections.recently_completed[]?] | length' "$mock_state" 2>/dev/null)"
 assert_eq "large Actions response is not marked stale" "false" \
   "$(jq '.meta.stale' "$mock_state" 2>/dev/null)"
+rm -rf "$tmpdir"
+
+# ── Test 25: hostile server and local-user hardening (#26) ──
+echo "Test 25: hardening against a hostile server and other local users"
+setup_env; tmpdir="$_SETUP_TMP"
+mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
+make_mock_curl "$tmpdir" "hostile"
+real_jq=$(command -v jq)
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/jq-argv.log"\nexec "%s" "$@"\n' "$tmpdir" "$real_jq" > "$tmpdir/jq"
+chmod +x "$tmpdir/jq"
+set +e
+PATH="$tmpdir:$PATH" bash "$COLLECTOR" >/dev/null 2>&1
+hostile_status=$?
+set -e
+assert_eq "large private reviews don't break collection" "0" "$hostile_status"
+assert_eq "review bodies never in jq argv" "0" "$(grep -c 'SECRET-REVIEW-BODY' "$tmpdir/jq-argv.log" || true)"
+assert_eq "every curl call ignores ~/.curlrc (-q first)" "0" "$(grep -vc '^-q ' "$tmpdir/curl-argv.log" || true)"
+assert_eq "every curl call disables URL globbing" "0" "$(grep -vEc '(^| )(-g|--globoff)( |$)' "$tmpdir/curl-argv.log" || true)"
+assert_eq "invalid repo names are never requested" "0" "$(grep -c '\[1-3\]' "$tmpdir/curl-argv.log" || true)"
+assert_eq "valid repos still collected" "true" "$(jq '.known_repos | index("testuser/webapp") != null' "$mock_state" 2>/dev/null)"
+assert_eq "lock file is private" "600" "$(stat -c %a "$XDG_STATE_HOME/omarchy/gitea-workstatus/.collect.lock")"
+rm -rf "$tmpdir"
+
+# ── Test 26: carried-forward and fresh status data stay out of jq argv (#26) ──
+echo "Test 26: carry-forward and commit statuses never pass through jq argv"
+setup_env; tmpdir="$_SETUP_TMP"
+mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
+orig_ts=$(date -u -d "1 hour ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2026-09-15T00:00:00Z")
+cat > "$mock_state" << OLD
+{"meta":{"collected_at":"$orig_ts","stale":false},"summary":{"open_prs":3},"sections":{"all_prs":[{"id":7,"repo":"t/r-review","title":"t","reviews":{"approved":0,"changes_requested":1,"pending":0,"reviewers":["SECRET-CARRY-REVIEW"],"all_reviewers":["SECRET-CARRY-REVIEW"]},"ci":{"state":"success","total":1,"checks":[],"passed":1,"failed":0,"pending_count":0}},{"id":7,"repo":"t/r-status","title":"t","reviews":{"approved":0,"changes_requested":0,"pending":0,"reviewers":[],"all_reviewers":[]},"ci":{"state":"failure","total":1,"checks":[{"context":"ci","status":"failure","description":"SECRET-CARRY-CI"}],"passed":0,"failed":1,"pending_count":0}},{"id":5,"repo":"t/r-prs","title":"SECRET-CARRY-PR","updated":"$orig_ts","needs_attention":false,"status_label":"open","requested_reviewers":[]}],"running":[{"repo":"t/r-runs","id":9,"bucket":"running","workflow":"SECRET-CARRY-RUN","updated":"$orig_ts"}],"recently_completed":[],"attention":[],"my_prs":[],"review_queue":[]},"repos":["t/r-review","t/r-status","t/r-prs","t/r-runs"]}
+OLD
+cat > "$tmpdir/curl" << 'MOCK'
+#!/usr/bin/env bash
+url=""; write=false
+for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
+pr='[{"number":7,"title":"Now","state":"open","draft":false,"user":{"login":"testuser"},"head":{"ref":"m","sha":"a"},"base":{"ref":"m"},"created_at":"2026-09-15T09:00:00Z","updated_at":"2026-09-16T09:00:00Z","html_url":"https://x/pulls/7","mergeable":true,"labels":[],"requested_reviewers":[]}]'
+case "$p" in
+  /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
+  /user/repos) echo '[{"owner":{"login":"t"},"name":"r-review"},{"owner":{"login":"t"},"name":"r-status"},{"owner":{"login":"t"},"name":"r-prs"},{"owner":{"login":"t"},"name":"r-runs"}]'; $write && printf '\n200' ;;
+  /repos/t/r-prs/pulls) echo '{"message":"err"}'; $write && printf '\n500' ;;
+  /repos/t/r-runs/pulls) echo '[]'; $write && printf '\n200' ;;
+  /repos/*/pulls) echo "$pr"; $write && printf '\n200' ;;
+  /repos/t/r-review/pulls/7/reviews) echo '{"message":"err"}'; $write && printf '\n500' ;;
+  /repos/*/pulls/*/reviews) echo '[]'; $write && printf '\n200' ;;
+  /repos/t/r-status/commits/*/status) echo '{"message":"err"}'; $write && printf '\n500' ;;
+  /repos/*/commits/*/status) echo '{"state":"success","total_count":1,"statuses":[{"context":"ci","status":"success","description":"SECRET-FRESH-STATUS"}]}'; $write && printf '\n200' ;;
+  /repos/t/r-runs/actions/runs) echo '{"message":"err"}'; $write && printf '\n500' ;;
+  /repos/*/actions/runs) echo '{"total_count":0,"workflow_runs":[]}'; $write && printf '\n200' ;;
+  *) echo '[]'; $write && printf '\n200' ;;
+esac
+exit 0
+MOCK
+chmod +x "$tmpdir/curl"
+real_jq=$(command -v jq)
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/jq-argv.log"\nexec "%s" "$@"\n' "$tmpdir" "$real_jq" > "$tmpdir/jq"
+chmod +x "$tmpdir/jq"
+set +e
+PATH="$tmpdir:$PATH" bash "$COLLECTOR" >/dev/null 2>&1
+carry_status=$?
+set -e
+assert_eq "carry-forward run exits successfully" "0" "$carry_status"
+assert_eq "PR carry path was exercised" "1" \
+  "$(jq '[.sections.all_prs[] | select(.title == "SECRET-CARRY-PR")] | length' "$mock_state" 2>/dev/null)"
+assert_eq "run carry path was exercised" "1" \
+  "$(jq '[.sections.running[] | select(.workflow == "SECRET-CARRY-RUN")] | length' "$mock_state" 2>/dev/null)"
+for marker in SECRET-FRESH-STATUS SECRET-CARRY-REVIEW SECRET-CARRY-CI SECRET-CARRY-PR SECRET-CARRY-RUN; do
+  assert_eq "$marker never in jq argv" "0" "$(grep -c "$marker" "$tmpdir/jq-argv.log" || true)"
+done
 rm -rf "$tmpdir"
 
 echo ""

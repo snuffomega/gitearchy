@@ -5,6 +5,8 @@
 # Target: Gitea >= 1.19. Actions runs require >= 1.20.
 # Runtime deps: bash, curl, jq (>= 1.6), flock, coreutils
 set -euo pipefail
+# Everything this collector creates is private to the user (#26).
+umask 077
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/gitea-workstatus"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gitea-workstatus"
@@ -20,6 +22,7 @@ mkdir -p "$STATE_DIR" "$CONFIG_DIR"
 
 # --- flock-based mutual exclusion ---
 exec 9>"$LOCK_FILE"
+chmod 600 "$LOCK_FILE"
 flock -n 9 || { echo "Another collector is running"; exit 0; }
 
 # --- Atomic write: temp + rename ---
@@ -63,6 +66,19 @@ GITEA_URL="${GITEA_URL%/}"
 # reaches curl through a pipe and never appears in any process's argv (#20).
 auth_config() { printf 'header = "Authorization: token %s"\n' "$GITEA_TOKEN"; }
 
+# One authenticated request; prints the body, then the HTTP code on its own
+# line. -q (must come first) ignores ~/.curlrc, which could trace the token or
+# disable TLS checks; -g keeps URL glob characters literal (#26).
+gitea_curl() {
+  curl -q -g -sS --max-time 15 -w '\n%{http_code}' \
+    -K <(auth_config) \
+    -H "Accept: application/json" \
+    "$1" 2>/dev/null
+}
+
+# A name, number or SHA that is safe as one URL path segment.
+safe_segment() { [[ $1 =~ ^[A-Za-z0-9_.-]+$ && $1 != . && $1 != .. ]]; }
+
 # --- API helpers ---
 # api ENDPOINT [PAGE] [LIMIT] [EXTRA_PARAMS]
 # Returns body on stdout. Exit 1 on transport/HTTP failure.
@@ -76,10 +92,7 @@ api() {
     url="${url}&${extra}"
   fi
   local response http_code body
-  response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
-    -K <(auth_config) \
-    -H "Accept: application/json" \
-    "$url" 2>/dev/null) || return 1
+  response=$(gitea_curl "$url") || return 1
 
   http_code=$(echo "$response" | tail -1)
   body=$(echo "$response" | sed '$d')
@@ -110,10 +123,7 @@ api_paginated() {
       url="${url}&${extra}"
     fi
     local response
-    if ! response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
-      -K <(auth_config) \
-      -H "Accept: application/json" \
-      "$url" 2>/dev/null); then
+    if ! response=$(gitea_curl "$url"); then
       coverage="PARTIAL"
       break
     fi
@@ -186,10 +196,7 @@ fetch_action_runs_with_code() {
   local owner="$1" repo="$2"
   local url="${GITEA_URL}/api/v1/repos/${owner}/${repo}/actions/runs?page=1&limit=20"
   local response http_code
-  if ! response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
-    -K <(auth_config) \
-    -H "Accept: application/json" \
-    "$url" 2>/dev/null); then
+  if ! response=$(gitea_curl "$url"); then
     echo "TRANSPORT"
     return 0
   fi
@@ -249,6 +256,10 @@ for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
   repo=$(echo "$decoded" | jq -r '.name')
   has_prs=$(echo "$decoded" | jq -r 'if has("has_pull_requests") then .has_pull_requests else true end')
   is_empty=$(echo "$decoded" | jq -r '.empty == true')
+  if ! safe_segment "$owner" || ! safe_segment "$repo"; then
+    echo "Skipping repository with an unsafe name: $owner/$repo" >&2
+    continue
+  fi
 
   repo_attempted=$((repo_attempted + 1))
   echo "$owner/$repo" >> "$tmpdir/repos_list"
@@ -276,6 +287,8 @@ for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
         for i in $(seq 0 $((pr_count - 1))); do
           pr_index=$(echo "$prs" | jq -r ".[$i].number")
           pr_sha=$(echo "$prs" | jq -r ".[$i].head.sha // empty")
+          [[ $pr_index =~ ^[0-9]+$ ]] || continue
+          safe_segment "$pr_sha" || pr_sha=""
 
           reviews="[]"
           review_coverage_file="$tmpdir/review_coverage_${idx}_${pr_index}"
@@ -301,10 +314,14 @@ for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
             fi
           fi
 
+          # Through files, not argv: review bodies are private and can exceed
+          # the argument size limit (#26).
+          printf '%s\n' "$reviews" > "$tmpdir/revs_${idx}.json"
+          printf '%s\n' "$commit_status" > "$tmpdir/cs_${idx}.json"
           prs=$(echo "$prs" | jq --argjson idx "$i" \
-            --argjson revs "$reviews" \
-            --argjson cs "$commit_status" \
-            '.[$idx]._reviews = $revs | .[$idx]._commit_status = $cs')
+            --slurpfile revs "$tmpdir/revs_${idx}.json" \
+            --slurpfile cs "$tmpdir/cs_${idx}.json" \
+            '.[$idx]._reviews = $revs[0] | .[$idx]._commit_status = $cs[0]')
         done
 
         prs=$(echo "$prs" | jq --arg fn "${owner}/${repo}" '[.[] | . + {"_repo": $fn}]')
@@ -370,7 +387,8 @@ if [ -f "$OUTPUT" ]; then
   fi
 fi
 
-# Per-resource, per-repo carry-forward and metadata collection.
+# Per-resource, per-repo carry-forward and metadata collection. Carried data
+# reaches jq through private files, never argv, like fresh data (#26).
 all_prs="[]"
 all_runs="[]"
 carried_repos="[]"
@@ -453,8 +471,9 @@ if [ "$can_carry" = "true" ]; then
       'first(.sections.all_prs[]? | select(.repo == $fn and .id == $id) | .reviews) // null' "$OUTPUT")
     if [ "$lift_review" != "null" ] && echo "$all_prs" | jq -e --arg fn "$fn" --argjson id "$pr_id" \
       'any(.[]; ._repo == $fn and .number == $id)' >/dev/null; then
-      all_prs=$(echo "$all_prs" | jq --arg fn "$fn" --argjson id "$pr_id" --argjson lift "$lift_review" \
-        'map(if ._repo == $fn and .number == $id then . + {"_review_summary": $lift} else . end)')
+      printf '%s\n' "$lift_review" > "$tmpdir/lift.json"
+      all_prs=$(echo "$all_prs" | jq --arg fn "$fn" --argjson id "$pr_id" --slurpfile lifts "$tmpdir/lift.json" \
+        '$lifts[0] as $lift | map(if ._repo == $fn and .number == $id then . + {"_review_summary": $lift} else . end)')
       carry_review_keys=$(echo "$carry_review_keys" | jq --arg fn "$fn" --argjson id "$pr_id" \
         '. + [{repo: $fn, id: $id}] | unique_by([.repo, .id])')
     fi
@@ -467,8 +486,9 @@ if [ "$can_carry" = "true" ]; then
       'first(.sections.all_prs[]? | select(.repo == $fn and .id == $id) | .ci) // null' "$OUTPUT")
     if [ "$lift_ci" != "null" ] && echo "$all_prs" | jq -e --arg fn "$fn" --argjson id "$pr_id" \
       'any(.[]; ._repo == $fn and .number == $id)' >/dev/null; then
-      all_prs=$(echo "$all_prs" | jq --arg fn "$fn" --argjson id "$pr_id" --argjson lift "$lift_ci" \
-        'map(if ._repo == $fn and .number == $id then . + {"_ci_summary": $lift} else . end)')
+      printf '%s\n' "$lift_ci" > "$tmpdir/lift.json"
+      all_prs=$(echo "$all_prs" | jq --arg fn "$fn" --argjson id "$pr_id" --slurpfile lifts "$tmpdir/lift.json" \
+        '$lifts[0] as $lift | map(if ._repo == $fn and .number == $id then . + {"_ci_summary": $lift} else . end)')
       carry_status_keys=$(echo "$carry_status_keys" | jq --arg fn "$fn" --argjson id "$pr_id" \
         '. + [{repo: $fn, id: $id}] | unique_by([.repo, .id])')
     fi
@@ -515,12 +535,15 @@ overview=$(jq -n \
 if [ "$carried" = "true" ]; then
   for fn in $(echo "$carry_pr_repos" | jq -r '.[]'); do
     lift_prs=$(jq -c --arg fn "$fn" '[.sections.all_prs[]? | select(.repo == $fn)]' "$OUTPUT")
-    overview=$(echo "$overview" | jq --arg fn "$fn" --argjson lift "$lift_prs" \
-      '.sections.all_prs = ([.sections.all_prs[] | select(.repo != $fn)] + $lift)')
+    printf '%s\n' "$lift_prs" > "$tmpdir/lift.json"
+    overview=$(echo "$overview" | jq --arg fn "$fn" --slurpfile lifts "$tmpdir/lift.json" \
+      '$lifts[0] as $lift | .sections.all_prs = ([.sections.all_prs[] | select(.repo != $fn)] + $lift)')
   done
   for fn in $(echo "$carry_run_repos" | jq -r '.[]'); do
     lift_runs=$(jq -c --arg fn "$fn" '(.sections.running // []) + (.sections.recently_completed // []) | map(select(.repo == $fn))' "$OUTPUT")
-    overview=$(echo "$overview" | jq --arg fn "$fn" --argjson lift "$lift_runs" '
+    printf '%s\n' "$lift_runs" > "$tmpdir/lift.json"
+    overview=$(echo "$overview" | jq --arg fn "$fn" --slurpfile lifts "$tmpdir/lift.json" '
+      $lifts[0] as $lift |
       .sections.running = ([.sections.running[] | select(.repo != $fn)] + [$lift[] | select(.bucket == "running")]) |
       .sections.recently_completed = ([.sections.recently_completed[] | select(.repo != $fn)] + [$lift[] | select(.bucket != "running")])
     ')

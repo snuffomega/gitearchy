@@ -25,6 +25,39 @@ function getMeta() {
     return _data.meta || {};
 }
 
+// Scheme, lower-cased host and non-default port of a URL, plus its path; null
+// for anything but plain http(s) with no userinfo.
+function _splitUrl(url) {
+    var m = /^(https?):\/\/(\[[0-9a-f:.]+\]|[^\/?#@:\[\]]+)(?::(\d+))?([\/?#].*)?$/i.exec(String(url));
+    if (!m) return null;
+    var scheme = m[1].toLowerCase();
+    var port = m[3] && m[3] !== (scheme === "https" ? "443" : "80") ? ":" + m[3] : "";
+    return { origin: scheme + "://" + m[2].toLowerCase() + port, path: m[4] || "" };
+}
+
+// A link from the API, or "" unless it points into the configured Gitea, so a
+// hostile server can't send a click to another host or scheme (#26).
+function safeUrl(url) {
+    var base = (getMeta() || {}).gitea_url;
+    if (typeof url !== "string" || typeof base !== "string") return "";
+    var b = _splitUrl(base), u = _splitUrl(url);
+    if (!b || !u || /[?#]/.test(b.path) || u.origin !== b.origin) return "";
+    return u.path.indexOf(b.path.replace(/\/$/, "") + "/") === 0 ? url : "";
+}
+
+// The configured Gitea page of an "owner/repo", or "" for any other shape.
+function repoUrl(repo) {
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(repo || ""))) return "";
+    if (String(repo).split("/").some(function(part) { return part === "." || part === ".."; })) return "";
+    var base = (getMeta() || {}).gitea_url;
+    return safeUrl(base + "/" + repo);
+}
+
+// notify-send bodies honour a markup subset; show API text literally (#26).
+function escapeMarkup(text) {
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function resetNotifications() {
     _initialLoad = true;
     _notifyState = {};
@@ -216,7 +249,7 @@ function getNewNotifications(notifyFailure, notifyReview) {
         if (degraded[c.repo] && !_initialLoad) continue;
         var quiet = _initialLoad || wholeStale || !enabled;
         if (!quiet && c.fire && (!prev || prev.status !== c.status)) {
-            notes.push({ type: c.kind, message: c.message });
+            notes.push({ type: c.kind, message: escapeMarkup(c.message) });
         }
         next[c.key] = { status: c.status, repo: c.repo, notifiedAt: now };
     }
