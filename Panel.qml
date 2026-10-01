@@ -183,6 +183,7 @@ Ui.PopupCard {
             spacing: Style.space(8)
 
             Text {
+                textFormat: Text.PlainText
                 text: "Gitea"
                 font.family: Style.font.family
                 font.pixelSize: Style.font.heading
@@ -191,6 +192,7 @@ Ui.PopupCard {
             }
 
             Text {
+                textFormat: Text.PlainText
                 text: {
                     void panel.dataRev;
                     var meta = Model.getMeta();
@@ -205,6 +207,7 @@ Ui.PopupCard {
             Item { Layout.fillWidth: true }
 
             Text {
+                textFormat: Text.PlainText
                 text: panel.pickerOpen ? "Done" : "Repos"
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -221,6 +224,7 @@ Ui.PopupCard {
             }
 
             Text {
+                textFormat: Text.PlainText
                 visible: barWidget && barWidget.stale
                 text: "stale"
                 font.family: Style.font.family
@@ -230,6 +234,7 @@ Ui.PopupCard {
             }
 
             Text {
+                textFormat: Text.PlainText
                 text: isRefreshing ? "refreshing\u2026" : ""
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -245,6 +250,7 @@ Ui.PopupCard {
             }
 
             Text {
+                textFormat: Text.PlainText
                 text: {
                     void panel.dataRev;
                     var meta = Model.getMeta();
@@ -256,6 +262,7 @@ Ui.PopupCard {
             }
 
             Text {
+                textFormat: Text.PlainText
                 text: {
                     void panel.dataRev;
                     var meta = Model.getMeta();
@@ -453,6 +460,7 @@ Ui.PopupCard {
                     Row {
                         spacing: Style.space(3)
                         Text {
+                            textFormat: Text.PlainText
                             text: modelData.key
                             font.family: Style.font.family
                             font.pixelSize: Style.font.bodySmall
@@ -460,6 +468,7 @@ Ui.PopupCard {
                             opacity: 0.85
                         }
                         Text {
+                            textFormat: Text.PlainText
                             text: modelData.action
                             font.family: Style.font.family
                             font.pixelSize: Style.font.bodySmall
@@ -471,6 +480,7 @@ Ui.PopupCard {
 
             Text {
                 id: hintsToggle
+                textFormat: Text.PlainText
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 text: (panel.hintsOpen ? "\u203A" : "\u2039") + " keys"

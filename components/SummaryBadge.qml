@@ -43,6 +43,7 @@ Item {
         spacing: Style.space(4)
 
         Text {
+            textFormat: Text.PlainText
             text: badge.count.toString()
             font.family: Style.font.family
             font.pixelSize: Style.font.body
@@ -51,6 +52,7 @@ Item {
         }
 
         Text {
+            textFormat: Text.PlainText
             text: badge.label
             font.family: Style.font.family
             font.pixelSize: Style.font.body

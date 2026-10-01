@@ -69,6 +69,7 @@ Item {
             }
 
             Text {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: row.entry.workflow || ""
                 font.family: Style.font.family
@@ -79,6 +80,7 @@ Item {
             }
 
             Text {
+                textFormat: Text.PlainText
                 text: row.result
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -95,6 +97,7 @@ Item {
             spacing: Style.space(6)
 
             Text {
+                textFormat: Text.PlainText
                 text: row.entry.repo || ""
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -113,6 +116,7 @@ Item {
             }
 
             Text {
+                textFormat: Text.PlainText
                 text: row.entry.branch || ""
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -123,6 +127,7 @@ Item {
             }
 
             Text {
+                textFormat: Text.PlainText
                 visible: !!row.entry.event
                 text: row.entry.event || ""
                 font.family: Style.font.family
@@ -133,6 +138,7 @@ Item {
             Item { Layout.fillWidth: true }
 
             Text {
+                textFormat: Text.PlainText
                 text: Model.timeAgo(row.entry.updated || row.entry.started)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body

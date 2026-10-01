@@ -237,6 +237,7 @@ Ui.BarWidget {
             spacing: Style.space(6)
 
             Text {
+                textFormat: Text.PlainText
                 text: "\u2387"
                 font.family: Style.font.family
                 font.pixelSize: Style.space(14)
@@ -265,12 +266,14 @@ Ui.BarWidget {
                     spacing: Style.space(2)
                     visible: root.barSummary.failed > 0
                     Text {
+                        textFormat: Text.PlainText
                         text: "\u2718"
                         font.pixelSize: Style.space(10)
                         color: Color.urgent
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
+                        textFormat: Text.PlainText
                         text: root.barSummary.failed
                         font.family: Style.font.family
                         font.pixelSize: Style.space(11)
@@ -284,12 +287,14 @@ Ui.BarWidget {
                     spacing: Style.space(2)
                     visible: root.barSummary.review > 0
                     Text {
+                        textFormat: Text.PlainText
                         text: "\u25CF"
                         font.pixelSize: Style.space(8)
                         color: Color.accent
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
+                        textFormat: Text.PlainText
                         text: root.barSummary.review
                         font.family: Style.font.family
                         font.pixelSize: Style.space(11)
@@ -303,6 +308,7 @@ Ui.BarWidget {
                     spacing: Style.space(2)
                     visible: root.barSummary.running > 0
                     Text {
+                        textFormat: Text.PlainText
                         text: "\u25E6"
                         font.pixelSize: Style.space(10)
                         color: Color.accent
@@ -316,6 +322,7 @@ Ui.BarWidget {
                         }
                     }
                     Text {
+                        textFormat: Text.PlainText
                         text: root.barSummary.running
                         font.family: Style.font.family
                         font.pixelSize: Style.space(11)
@@ -328,12 +335,14 @@ Ui.BarWidget {
                     spacing: Style.space(2)
                     visible: root.barSummary.ready > 0 && root.barSummary.attention === 0
                     Text {
+                        textFormat: Text.PlainText
                         text: "\u2714"
                         font.pixelSize: Style.space(10)
                         color: Color.foreground
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
+                        textFormat: Text.PlainText
                         text: root.barSummary.ready
                         font.family: Style.font.family
                         font.pixelSize: Style.space(11)
@@ -344,6 +353,7 @@ Ui.BarWidget {
             }
 
             Text {
+                textFormat: Text.PlainText
                 visible: root.hasError
                 text: "!"
                 font.family: Style.font.family

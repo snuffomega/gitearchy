@@ -76,6 +76,7 @@ Item {
             }
 
             Text {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 Layout.minimumWidth: Style.space(60)
                 text: row.entry.title || ""
@@ -95,6 +96,7 @@ Item {
                 color: Qt.rgba(Color.muted.r, Color.muted.g, Color.muted.b, 0.15)
                 Text {
                     id: draftText
+                    textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: "draft"
                     font.family: Style.font.family
@@ -111,6 +113,7 @@ Item {
                 color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15)
                 Text {
                     id: conflictText
+                    textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: "conflicts"
                     font.family: Style.font.family
@@ -120,6 +123,7 @@ Item {
             }
 
             Text {
+                textFormat: Text.PlainText
                 text: "#" + (row.entry.id || "")
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -132,6 +136,7 @@ Item {
             spacing: Style.space(6)
 
             Text {
+                textFormat: Text.PlainText
                 text: row.entry.repo || ""
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -150,6 +155,7 @@ Item {
             }
 
             Text {
+                textFormat: Text.PlainText
                 text: "\u2192"
                 font.pixelSize: Style.font.bodySmall
                 color: Color.muted
@@ -157,6 +163,7 @@ Item {
             }
 
             Text {
+                textFormat: Text.PlainText
                 text: row.entry.branch || ""
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -169,6 +176,7 @@ Item {
             Item { Layout.fillWidth: true }
 
             Text {
+                textFormat: Text.PlainText
                 text: row.entry.author || ""
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -178,6 +186,7 @@ Item {
             }
 
             Text {
+                textFormat: Text.PlainText
                 text: Model.timeAgo(row.entry.updated)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -198,6 +207,7 @@ Item {
                 visible: parent.hasReviewInfo
 
                 Text {
+                    textFormat: Text.PlainText
                     text: {
                         var parts = [];
                         if (row.entry.reviews.approved > 0) parts.push("\u2713 " + row.entry.reviews.approved);
@@ -215,6 +225,7 @@ Item {
                 visible: parent.hasCiInfo
 
                 Text {
+                    textFormat: Text.PlainText
                     text: {
                         if (!row.entry.ci) return "";
                         return row.entry.ci.passed + "/" + row.entry.ci.total + " checks";
@@ -233,6 +244,7 @@ Item {
             Item { Layout.fillWidth: true }
 
             Text {
+                textFormat: Text.PlainText
                 visible: !!row.entry.blocker
                 text: row.entry.blocker || ""
                 font.family: Style.font.family
@@ -261,6 +273,7 @@ Item {
 
                     Text {
                         id: labelText
+                        textFormat: Text.PlainText
                         anchors.centerIn: parent
                         text: modelData.name || ""
                         font.family: Style.font.family

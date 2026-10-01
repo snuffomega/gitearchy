@@ -15,6 +15,7 @@ Item {
         spacing: Style.space(8)
 
         Text {
+            textFormat: Text.PlainText
             Layout.alignment: Qt.AlignHCenter
             text: {
                 switch (section) {
@@ -30,6 +31,7 @@ Item {
         }
 
         Text {
+            textFormat: Text.PlainText
             Layout.alignment: Qt.AlignHCenter
             text: {
                 switch (section) {
@@ -48,6 +50,7 @@ Item {
         }
 
         Text {
+            textFormat: Text.PlainText
             Layout.alignment: Qt.AlignHCenter
             visible: section === "attention"
             text: "All clear \u2014 your repos are healthy"

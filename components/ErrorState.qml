@@ -16,6 +16,7 @@ Item {
         spacing: Style.space(8)
 
         Text {
+            textFormat: Text.PlainText
             Layout.alignment: Qt.AlignHCenter
             text: "!"
             font.pixelSize: Style.font.display
@@ -25,6 +26,7 @@ Item {
         }
 
         Text {
+            textFormat: Text.PlainText
             Layout.alignment: Qt.AlignHCenter
             text: message || "Something went wrong"
             font.family: Style.font.family
@@ -36,6 +38,7 @@ Item {
         }
 
         Text {
+            textFormat: Text.PlainText
             Layout.alignment: Qt.AlignHCenter
             visible: message.indexOf("credentials") !== -1 || message.indexOf("No credentials") !== -1
             text: "Create ~/.config/gitea-workstatus/credentials\nwith GITEA_URL and GITEA_TOKEN"
@@ -47,6 +50,7 @@ Item {
         }
 
         Text {
+            textFormat: Text.PlainText
             Layout.alignment: Qt.AlignHCenter
             visible: giteaUrl !== ""
             text: "Open Gitea"

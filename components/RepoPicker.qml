@@ -99,6 +99,7 @@ Item {
             spacing: Style.space(12)
 
             Text {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: picker.shownCount + " of " + picker.totalCount + " shown in the bar · all still notify"
                 font.family: Style.font.family
@@ -113,6 +114,7 @@ Item {
                     { label: "Hide all", show: false }
                 ]
                 Text {
+                    textFormat: Text.PlainText
                     text: modelData.label
                     font.family: Style.font.family
                     font.pixelSize: Style.font.body
@@ -131,6 +133,7 @@ Item {
         }
 
         Text {
+            textFormat: Text.PlainText
             Layout.fillWidth: true
             visible: picker.saveFailed
             text: "This bar cannot save settings; the choice lasts until the shell restarts."
@@ -141,6 +144,7 @@ Item {
         }
 
         Text {
+            textFormat: Text.PlainText
             Layout.fillWidth: true
             visible: picker.rows.length === 0
             text: picker.totalCount === 0 ? "No repositories collected yet" : "No repositories match"

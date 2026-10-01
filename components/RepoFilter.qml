@@ -34,6 +34,7 @@ Item {
 
             Text {
                 id: allText
+                textFormat: Text.PlainText
                 anchors.centerIn: parent
                 text: "All"
                 font.family: Style.font.family
@@ -80,6 +81,7 @@ Item {
 
                         Text {
                             id: repoText
+                            textFormat: Text.PlainText
                             anchors.centerIn: parent
                             text: {
                                 var parts = modelData.split("/");

@@ -186,6 +186,7 @@ bash tests/run-all.sh
 | `test-jq-transform.sh` | PR classification, draft, conflict and mergeability guards, latest review per reviewer, blockers, CI summaries, legacy and current Actions run shapes, section bucketing |
 | `test-model.sh` | Section and focus filtering, hidden repos leaving counts but still notifying, the repo picker, per-repo stale policy, cold-start suppression, per-item notification transitions, run failures |
 | `test-collector-validation.sh` | Exit codes, malformed and partial responses, pagination, per-resource carry-forward, stale metadata, the full repo list, PR-disabled repos, transport failures, lock contention |
+| `test-plain-text.sh` | Every text label renders as plain text, so markup in a PR title, repo or job name is shown literally and never fetched |
 
 Not covered offline: manifest validity (`omarchy plugin validate .`), a live Gitea server, desktop notifications, and anything that needs a click in the running bar.
 
