@@ -61,11 +61,18 @@ make_mock_curl() {
 #!/usr/bin/env bash
 url=""
 has_write_out=false
+# Record argv and any config stream so tests can check where the token travels.
+printf '%s\n' "\$*" >> "$tmpdir/curl-argv.log"
+prev=""
 for arg in "\$@"; do
+  case "\$prev" in
+    -K|--config) cat "\$arg" >> "$tmpdir/curl-config.log" 2>/dev/null ;;
+  esac
   case "\$arg" in
     https://*) url="\$arg" ;;
     *http_code*) has_write_out=true ;;
   esac
+  prev="\$arg"
 done
 
 mock_dir="$MOCK_DIR"
@@ -262,6 +269,10 @@ if [ -f "$mock_state" ]; then
   assert_eq "has PRs" "true" "$([ "$pr_count" -gt 0 ] && echo true || echo false)"
   assert_eq "correct username" "testuser" "$(jq -r '.meta.username' "$mock_state" 2>/dev/null)"
   assert_eq "not stale" "false" "$(jq '.meta.stale' "$mock_state" 2>/dev/null)"
+  # The token must never appear in a process's arguments (visible in /proc).
+  assert_eq "token never in curl argv" "0" "$(grep -c 'mock-token' "$tmpdir/curl-argv.log")"
+  assert_eq "auth header still reaches curl" "true" \
+    "$(grep -q 'Authorization: token mock-token' "$tmpdir/curl-config.log" 2>/dev/null && echo true || echo false)"
   # The repo picker lists every fetched repository, not only active ones.
   assert_eq "known_repos lists every fetched repo" '["org/docs","testuser/api-server","testuser/webapp"]' \
     "$(jq -c '.known_repos' "$mock_state" 2>/dev/null)"
