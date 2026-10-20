@@ -39,9 +39,8 @@ Ui.BarWidget {
     property string errorMsg: ""
     property string collectorError: ""
     property string collectionBaselineTs: ""
-    // Bumped whenever the snapshot or the display settings change, so an open
-    // panel repopulates on either.
-    property int dataRevision: 0
+    // The last good snapshot; the panel reads it from here (see Model.js).
+    property var overview: null
     property string lastContent: ""
 
     implicitWidth: barRow.implicitWidth + Style.space(16)
@@ -55,7 +54,7 @@ Ui.BarWidget {
     }
     function toggle() { panelOpen ? close() : open(); }
     function refresh() {
-        var meta = Model.getMeta();
+        var meta = Model.getMeta(overview);
         collectionBaselineTs = meta ? String(meta.collected_at || "") : "";
         collector.running = true;
     }
@@ -85,10 +84,7 @@ Ui.BarWidget {
         api.updateEntryInline(moduleName || "io.github.snuffomega.gitearchy", next);
     }
 
-    onHiddenReposChanged: {
-        barSummary = Model.getBarSummary(hiddenRepos);
-        dataRevision++;
-    }
+    onHiddenReposChanged: barSummary = Model.getBarSummary(overview, hiddenRepos)
 
     function processData(content) {
         if (!content || content.trim() === "") {
@@ -97,8 +93,8 @@ Ui.BarWidget {
             return;
         }
 
-        var parsed;
-        try { parsed = JSON.parse(content); } catch(e) {
+        var parsed = Model.parseOverview(content);
+        if (!parsed) {
             hasError = true;
             errorMsg = "Corrupt status data";
             return;
@@ -120,15 +116,12 @@ Ui.BarWidget {
         if (content === lastContent) return;
         lastContent = content;
 
-        Model.parseOverview(content);
-        barSummary = Model.getBarSummary(hiddenRepos);
-        dataRevision++;
-
-        var meta = Model.getMeta();
-        stale = meta && meta.stale === true;
+        overview = parsed;
+        barSummary = Model.getBarSummary(overview, hiddenRepos);
+        stale = Model.getMeta(overview).stale === true;
 
         // Model.js decides per repository whether stale data may notify.
-        var notes = Model.getNewNotifications(notifyOnFailure, notifyOnReviewRequest);
+        var notes = Model.getNewNotifications(overview, notifyOnFailure, notifyOnReviewRequest);
         for (var i = 0; i < notes.length; i++) {
             sendNotification(notes[i].message);
         }

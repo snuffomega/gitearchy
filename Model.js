@@ -1,28 +1,26 @@
 // Model.js — State management for the Gitearchy plugin
 .pragma library
 
-// Library state is shared by every bar instance (one per monitor), so it holds
-// only the collected snapshot and notification memory. Display choices — the
-// hidden repositories and the panel's focused repository — are passed in by
-// the caller and never stored here.
-var _data = null;
+// The snapshot lives on the bar widget and is passed into every call: importers
+// don't share one library instance (Panel loads under a different URL scheme).
+// Only the bar's notification memory is kept here.
 var _initialLoad = true;
 
 // Notification state: keyed by "type:repo:id" → { status, repo, notifiedAt }
 var _notifyState = {};
 
+// The parsed snapshot, or null when the text is not JSON.
 function parseOverview(jsonText) {
     try {
-        _data = JSON.parse(jsonText);
-        return true;
+        return JSON.parse(jsonText);
     } catch (e) {
-        return false;
+        return null;
     }
 }
 
-function getMeta() {
-    if (!_data) return null;
-    return _data.meta || {};
+function getMeta(data) {
+    if (!data) return null;
+    return data.meta || {};
 }
 
 // Scheme, lower-cased host and non-default port of a URL, plus its path; null
@@ -37,8 +35,7 @@ function _splitUrl(url) {
 
 // A link from the API, or "" unless it points into the configured Gitea, so a
 // hostile server can't send a click to another host or scheme (#26).
-function safeUrl(url) {
-    var base = (getMeta() || {}).gitea_url;
+function safeUrl(url, base) {
     if (typeof url !== "string" || typeof base !== "string") return "";
     var b = _splitUrl(base), u = _splitUrl(url);
     if (!b || !u || /[?#]/.test(b.path) || u.origin !== b.origin) return "";
@@ -46,11 +43,10 @@ function safeUrl(url) {
 }
 
 // The configured Gitea page of an "owner/repo", or "" for any other shape.
-function repoUrl(repo) {
+function repoUrl(repo, base) {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(repo || ""))) return "";
     if (String(repo).split("/").some(function(part) { return part === "." || part === ".."; })) return "";
-    var base = (getMeta() || {}).gitea_url;
-    return safeUrl(base + "/" + repo);
+    return safeUrl(base + "/" + repo, base);
 }
 
 // notify-send bodies honour a markup subset; show API text literally (#26).
@@ -81,9 +77,9 @@ function isVisible(repo, hidden) {
 }
 
 // Repositories with current activity that the bar and panel may show.
-function visibleRepos(hidden) {
-    if (!_data) return [];
-    return (_data.repos || []).filter(function(r) { return isVisible(r, hidden); });
+function visibleRepos(data, hidden) {
+    if (!data) return [];
+    return (data.repos || []).filter(function(r) { return isVisible(r, hidden); });
 }
 
 // Merge the persisted hidden list with the legacy comma-separated setting.
@@ -107,19 +103,19 @@ function updateHidden(hidden, repos, hide) {
 
 // Every repository the collector fetched, active or not. Snapshots written
 // before known_repos existed fall back to the active ones.
-function knownRepos() {
-    if (!_data) return [];
-    var set = repoSet(_data.known_repos || []);
-    var active = _data.repos || [];
+function knownRepos(data) {
+    if (!data) return [];
+    var set = repoSet(data.known_repos || []);
+    var active = data.repos || [];
     for (var i = 0; i < active.length; i++) set[active[i]] = true;
     return Object.keys(set).sort();
 }
 
 // Picker rows matching a case-insensitive search: { repo, shown, active }.
-function pickerRows(hidden, query) {
+function pickerRows(data, hidden, query) {
     var needle = String(query || "").trim().toLowerCase();
-    var active = repoSet(_data ? _data.repos : []);
-    return knownRepos().filter(function(repo) {
+    var active = repoSet(data ? data.repos : []);
+    return knownRepos(data).filter(function(repo) {
         return !needle || repo.toLowerCase().indexOf(needle) !== -1;
     }).map(function(repo) {
         return { repo: repo, shown: isVisible(repo, hidden), active: !!active[repo] };
@@ -137,12 +133,12 @@ var _sectionKeys = {
 
 // Items of one panel section, limited to visible repositories and, when
 // view.focus is set, to that repository. view = { hidden, focus }.
-function sectionItems(section, view) {
-    if (!_data || !_data.sections) return [];
+function sectionItems(data, section, view) {
+    if (!data || !data.sections) return [];
     var key = _sectionKeys[section] || _sectionKeys.attention;
     var hidden = view ? view.hidden : null;
     var focus = view ? view.focus : "";
-    return (_data.sections[key] || []).filter(function(item) {
+    return (data.sections[key] || []).filter(function(item) {
         return isVisible(item.repo, hidden) && (!focus || item.repo === focus);
     });
 }
@@ -163,12 +159,12 @@ function runFailed(run) {
 }
 
 // Bar summary over visible repositories only.
-function getBarSummary(hidden) {
-    if (!_data || !_data.sections) return { total: 0, attention: 0, running: 0, failed: 0, review: 0, ready: 0, healthy: true };
+function getBarSummary(data, hidden) {
+    if (!data || !data.sections) return { total: 0, attention: 0, running: 0, failed: 0, review: 0, ready: 0, healthy: true };
     var view = { hidden: hidden, focus: "" };
-    var allPrs = sectionItems("all", view);
-    var attentionPrs = sectionItems("attention", view);
-    var runningJobs = sectionItems("running", view);
+    var allPrs = sectionItems(data, "all", view);
+    var attentionPrs = sectionItems(data, "attention", view);
+    var runningJobs = sectionItems(data, "running", view);
 
     var failed = 0, review = 0, ready = 0;
     for (var i = 0; i < allPrs.length; i++) {
@@ -191,8 +187,7 @@ function getBarSummary(hidden) {
 
 // Current notification-relevant state of every item, across all repositories:
 // visibility settings never silence notifications.
-function _notifyCandidates() {
-    var sections = _data.sections;
+function _notifyCandidates(sections) {
     var out = [];
     var prs = sections.all_prs || [];
     for (var i = 0; i < prs.length; i++) {
@@ -231,14 +226,14 @@ function _notifyCandidates() {
 // it collects cleanly, and a change first seen then fires on recovery. Every other repository notifies normally. A snapshot that
 // was re-emitted whole because the repository list itself failed
 // (meta.stale_since) is old data everywhere and fires nothing.
-function getNewNotifications(notifyFailure, notifyReview) {
+function getNewNotifications(data, notifyFailure, notifyReview) {
     var notes = [];
-    if (!_data || !_data.sections) return notes;
+    if (!data || !data.sections) return notes;
 
-    var meta = _data.meta || {};
+    var meta = data.meta || {};
     var degraded = meta.failed_resources || {};
     var wholeStale = !!meta.stale_since;
-    var candidates = _notifyCandidates();
+    var candidates = _notifyCandidates(data.sections);
     var now = Date.now();
     var next = {};
 

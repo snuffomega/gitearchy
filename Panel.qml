@@ -20,11 +20,15 @@ Ui.PopupCard {
     property bool pickerOpen: false
     // Key hints start collapsed on every open; never remembered (#14).
     property bool hintsOpen: false
-    property int dataRev: barWidget ? barWidget.dataRevision : 0
+    // The bar widget's snapshot; Model.js holds none for the panel.
+    readonly property var overview: barWidget ? barWidget.overview : null
+    readonly property var meta: Model.getMeta(overview)
+    readonly property string giteaUrl: meta ? meta.gitea_url || "" : ""
+    readonly property var hidden: barWidget ? barWidget.hiddenRepos : ({})
     // Display choices live here and on the bar widget, never in Model.js,
     // so each panel opens unfocused and monitors do not share a focus.
     readonly property var view: ({
-        hidden: barWidget ? barWidget.hiddenRepos : ({}),
+        hidden: hidden,
         focus: repoFilter
     })
 
@@ -55,12 +59,12 @@ Ui.PopupCard {
     function populateList() {
         // A focused repository that has since been hidden or gone quiet
         // would leave every section empty with no chip to clear it.
-        if (repoFilter && Model.visibleRepos(view.hidden).indexOf(repoFilter) === -1) {
+        if (repoFilter && Model.visibleRepos(overview, hidden).indexOf(repoFilter) === -1) {
             repoFilter = "";
         }
         listModel.clear();
         var itemType = (activeSection === "running" || activeSection === "completed") ? "job" : "pr";
-        var items = Model.sectionItems(activeSection, view);
+        var items = Model.sectionItems(overview, activeSection, view);
         for (var i = 0; i < items.length; i++) {
             listModel.append({ itemData: JSON.stringify(items[i]), itemType: itemType });
         }
@@ -70,16 +74,17 @@ Ui.PopupCard {
     function openSelected() {
         if (selectedIndex < 0 || selectedIndex >= listModel.count) return;
         var item = JSON.parse(listModel.get(selectedIndex).itemData);
-        var url = Model.safeUrl(item.url);
+        var url = Model.safeUrl(item.url, giteaUrl);
         if (url) Qt.openUrlExternally(url);
     }
 
     function openRepo(repo) {
-        var url = Model.repoUrl(repo);
+        var url = Model.repoUrl(repo, giteaUrl);
         if (url) Qt.openUrlExternally(url);
     }
 
-    onDataRevChanged: populateList()
+    onOverviewChanged: populateList()
+    onHiddenChanged: populateList()
 
     function setPickerOpen(open) {
         pickerOpen = open;
@@ -99,8 +104,7 @@ Ui.PopupCard {
     }
 
     function badgeCount(section) {
-        void dataRev;
-        return Model.sectionItems(section, view).length;
+        return Model.sectionItems(overview, section, view).length;
     }
 
     Item {
@@ -192,11 +196,7 @@ Ui.PopupCard {
 
             Text {
                 textFormat: Text.PlainText
-                text: {
-                    void panel.dataRev;
-                    var meta = Model.getMeta();
-                    return meta ? meta.username : "";
-                }
+                text: panel.meta ? panel.meta.username || "" : ""
                 font.family: Style.font.family
                 font.pixelSize: Style.font.subtitle
                 color: Color.muted
@@ -250,11 +250,7 @@ Ui.PopupCard {
 
             Text {
                 textFormat: Text.PlainText
-                text: {
-                    void panel.dataRev;
-                    var meta = Model.getMeta();
-                    return meta ? Model.timeAgo(meta.collected_at) : "";
-                }
+                text: panel.meta ? Model.timeAgo(panel.meta.collected_at) : ""
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
                 color: Color.muted
@@ -262,12 +258,8 @@ Ui.PopupCard {
 
             Text {
                 textFormat: Text.PlainText
-                text: {
-                    void panel.dataRev;
-                    var meta = Model.getMeta();
-                    if (meta && meta.repo_failed > 0) return meta.repo_failed + " repo(s) unreachable";
-                    return "";
-                }
+                text: panel.meta && panel.meta.repo_failed > 0
+                    ? panel.meta.repo_failed + " repo(s) unreachable" : ""
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
                 color: Color.accent
@@ -335,7 +327,7 @@ Ui.PopupCard {
         RepoFilter {
             id: repoFilterBar
             Layout.fillWidth: true
-            repos: { void panel.dataRev; return Model.visibleRepos(panel.view.hidden); }
+            repos: Model.visibleRepos(panel.overview, panel.hidden)
             currentFilter: panel.repoFilter
             onFilterChanged: function(repo) { panel.setRepoFilter(repo) }
             visible: !panel.pickerOpen && repos.length > 1
@@ -352,8 +344,8 @@ Ui.PopupCard {
             id: repoPicker
             Layout.fillWidth: true
             visible: panel.pickerOpen
-            hidden: barWidget ? barWidget.hiddenRepos : ({})
-            dataRev: panel.dataRev
+            overview: panel.overview
+            hidden: panel.hidden
             saveFailed: barWidget ? barWidget.hiddenSaveFailed : false
             onHiddenListChanged: function(list) { if (panel.barWidget) panel.barWidget.setHiddenRepos(list) }
             onLeaveSearch: contentCol.forceActiveFocus()
@@ -406,12 +398,8 @@ Ui.PopupCard {
                     PrRow {
                         entry: parsedData
                         selected: isSelected
-                        giteaUrl: {
-                            void panel.dataRev;
-                            var meta = Model.getMeta();
-                            return meta ? meta.gitea_url : "";
-                        }
-                        onOpenPr: { var url = Model.safeUrl(entry.url); if (url) Qt.openUrlExternally(url); }
+                        giteaUrl: panel.giteaUrl
+                        onOpenPr: { var url = Model.safeUrl(entry.url, panel.giteaUrl); if (url) Qt.openUrlExternally(url); }
                         onOpenRepo: panel.openRepo(entry.repo)
                     }
                 }
@@ -421,7 +409,7 @@ Ui.PopupCard {
                     JobRow {
                         entry: parsedData
                         selected: isSelected
-                        onOpenJob: { var url = Model.safeUrl(entry.url); if (url) Qt.openUrlExternally(url); }
+                        onOpenJob: { var url = Model.safeUrl(entry.url, panel.giteaUrl); if (url) Qt.openUrlExternally(url); }
                         onOpenRepo: panel.openRepo(entry.repo)
                     }
                 }

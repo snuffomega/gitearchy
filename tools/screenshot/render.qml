@@ -19,7 +19,7 @@ ShellRoot {
 
         QtObject {
             id: demoBar
-            property int dataRevision: 0
+            property var overview: null
             property var hiddenRepos: ({})
             property bool hasError: false
             property bool stale: false
@@ -34,8 +34,7 @@ ShellRoot {
         FileView {
             path: Quickshell.env("GITEARCHY_DEMO")
             onLoaded: {
-                Model.parseOverview(text());
-                demoBar.dataRevision++;
+                demoBar.overview = Model.parseOverview(text());
                 panelLoader.active = true;
             }
         }

@@ -11,8 +11,8 @@ import "../Model.js" as Model
 Item {
     id: picker
 
+    property var overview: null
     property var hidden: ({})
-    property int dataRev: 0
     property bool saveFailed: false
     property int selectedIndex: 0
     property alias query: search.text
@@ -20,16 +20,10 @@ Item {
     // Emits the complete new hidden list; the owner persists it.
     signal hiddenListChanged(var list)
 
-    readonly property var rows: {
-        void dataRev;
-        return Model.pickerRows(hidden, query);
-    }
-    readonly property int shownCount: {
-        void dataRev;
-        var all = Model.pickerRows(hidden, "");
-        return all.filter(function(r) { return r.shown; }).length;
-    }
-    readonly property int totalCount: { void dataRev; return Model.knownRepos().length; }
+    readonly property var rows: Model.pickerRows(overview, hidden, query)
+    readonly property int shownCount: Model.pickerRows(overview, hidden, "")
+        .filter(function(r) { return r.shown; }).length
+    readonly property int totalCount: Model.knownRepos(overview).length
 
     implicitHeight: col.implicitHeight
 
