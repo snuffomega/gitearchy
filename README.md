@@ -14,7 +14,7 @@ Your self-hosted Gitea, right in the Omarchy bar. Gitearchy keeps failed CI, req
 - **Drop-down panel:** Attention, Running, Completed, My PRs and Review sections, one click or keypress from any PR, job or repo.
 - **Honest merge status:** approvals, requested changes, conflicts, drafts and CI are combined into one status per PR, with a short "blocked by" note.
 - **Pick your repos:** choose which repositories appear in the bar; hidden ones still notify you.
-- **Quiet notifications:** alerts fire when a PR or job changes state, never on every refresh, and never in a flood at login.
+- **Quiet notifications:** alerts fire when a PR or job changes state, never on every refresh, and never in a flood at login. They say how many things changed, not which: repo names and PR titles stay in the panel.
 - **Read-only and resilient:** it only reads from Gitea, and keeps showing the last good data when your server or network hiccups.
 
 ## Requirements

@@ -122,9 +122,7 @@ Ui.BarWidget {
 
         // Model.js decides per repository whether stale data may notify.
         var notes = Model.getNewNotifications(overview, notifyOnFailure, notifyOnReviewRequest);
-        for (var i = 0; i < notes.length; i++) {
-            sendNotification(notes[i].message);
-        }
+        if (notes.length > 0) sendNotification(Model.notificationText(notes));
     }
 
     function processError(content) {
@@ -142,8 +140,8 @@ Ui.BarWidget {
         }
     }
 
-    // Detached so several notes from one refresh are all delivered; a shared
-    // Process ignores running = true while the previous send is still alive.
+    // Detached: a shared Process ignores running = true while a previous send
+    // is still alive.
     function sendNotification(body) {
         Quickshell.execDetached(["notify-send", "--app-name=Gitea", "Gitea", body]);
     }

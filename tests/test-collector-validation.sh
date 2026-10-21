@@ -66,7 +66,11 @@ printf '%s\n' "\$*" >> "$tmpdir/curl-argv.log"
 prev=""
 for arg in "\$@"; do
   case "\$prev" in
-    -K|--config) cat "\$arg" >> "$tmpdir/curl-config.log" 2>/dev/null ;;
+    -K|--config)
+      config=\$(cat "\$arg" 2>/dev/null)
+      printf '%s\n' "\$config" >> "$tmpdir/curl-config.log"
+      url=\$(printf '%s\n' "\$config" | sed -n 's/^url = "\\(.*\\)"\$/\\1/p')
+      ;;
   esac
   case "\$arg" in
     https://*) url="\$arg" ;;
@@ -183,15 +187,13 @@ fi
 # ── Test 2: JQ script syntax ──
 echo "Test 2: JQ transform syntax"
 JQ_SCRIPT="$SCRIPT_DIR/../bin/gitea-collect.jq"
-if jq -n -f "$JQ_SCRIPT" \
-  --arg url "test" --arg user "test" --arg ts "test" \
+if url="test" user="test" carried_repos='[]' failed_resources='{}' jq -n -f "$JQ_SCRIPT" \
+  --arg ts "test" \
   --argjson prs "[]" --argjson runs "[]" \
   --argjson repo_count 0 --argjson max_stale 6 \
   --argjson repo_failed 0 --argjson repo_attempted 0 \
   --argjson incomplete false \
   --argjson carried false \
-  --argjson carried_repos "[]" \
-  --argjson failed_resources "{}" \
   >/dev/null 2>&1; then
   echo "  PASS: jq syntax valid"
   PASS=$((PASS + 1))
@@ -437,7 +439,7 @@ OLD
 cat > "$tmpdir/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""; write=false
-for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 case "$p" in
   /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
@@ -469,7 +471,7 @@ OLD
 cat > "$tmpdir/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""; write=false
-for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 case "$p" in
   /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
@@ -501,7 +503,7 @@ OLD
 cat > "$tmpdir/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""; write=false
-for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 case "$p" in
   /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
@@ -535,7 +537,7 @@ mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
 cat > "$tmpdir/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""; write=false
-for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 page=$(echo "$url" | grep -oP 'page=\K[0-9]+' || echo "1")
 case "$p" in
@@ -582,7 +584,7 @@ mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
 cat > "$tmpdir/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""
-for a in "$@"; do case "$a" in https://*) url="$a";; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 case "$p" in
   /user) echo '{"login":"testuser"}
@@ -623,7 +625,7 @@ OLD
 cat > "$tmpdir/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""; write=false
-for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 case "$p" in
   /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
@@ -655,7 +657,7 @@ OLD
 cat > "$tmpdir/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""; write=false
-for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 case "$p" in
   /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
@@ -702,7 +704,7 @@ mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
 cat > "$tmpdir/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""; write=false
-for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 case "$p" in
   /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
@@ -737,7 +739,7 @@ OLD
 cat > "$tmpdir/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""; write=false
-for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 case "$p" in
   /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
@@ -770,7 +772,7 @@ OLD
 cat > "$tmpdir/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""; write=false
-for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 case "$p" in
   /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
@@ -851,7 +853,7 @@ OLD
 cat > "$tmpdir/curl" << 'MOCK'
 #!/usr/bin/env bash
 url=""; write=false
-for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+for a in "$@"; do case "$prev" in -K|--config) url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$a");; esac; prev="$a"; case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
 p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
 pr='[{"number":7,"title":"Now","state":"open","draft":false,"user":{"login":"testuser"},"head":{"ref":"m","sha":"a"},"base":{"ref":"m"},"created_at":"2026-09-15T09:00:00Z","updated_at":"2026-09-16T09:00:00Z","html_url":"https://x/pulls/7","mergeable":true,"labels":[],"requested_reviewers":[]}]'
 case "$p" in
@@ -883,10 +885,49 @@ assert_eq "PR carry path was exercised" "1" \
   "$(jq '[.sections.all_prs[] | select(.title == "SECRET-CARRY-PR")] | length' "$mock_state" 2>/dev/null)"
 assert_eq "run carry path was exercised" "1" \
   "$(jq '[.sections.running[] | select(.workflow == "SECRET-CARRY-RUN")] | length' "$mock_state" 2>/dev/null)"
-for marker in SECRET-FRESH-STATUS SECRET-CARRY-REVIEW SECRET-CARRY-CI SECRET-CARRY-PR SECRET-CARRY-RUN; do
+for marker in SECRET-FRESH-STATUS SECRET-CARRY-REVIEW SECRET-CARRY-CI SECRET-CARRY-PR SECRET-CARRY-RUN \
+              testuser t/r-review t/r-status t/r-prs t/r-runs; do
   assert_eq "$marker never in jq argv" "0" "$(grep -c "$marker" "$tmpdir/jq-argv.log" || true)"
 done
 rm -rf "$tmpdir"
+
+# ── Test 27: no private value reaches any child process's argv (#12411) ──
+echo "Test 27: host, user, repos, titles and branches never in any argv"
+setup_env; tmpdir="$_SETUP_TMP"
+mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
+make_mock_curl "$tmpdir" "normal"
+# Shim every external command the collector runs; each records its argv, then
+# runs the real command (or the mock curl) without the shims on PATH.
+mkdir "$tmpdir/shim"
+for cmd in curl jq sed tail head grep cat base64 mktemp mv rm date seq flock chmod mkdir dirname touch; do
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/argv.log"\nexport PATH="%s"\nexec %s "$@"\n' \
+    "$tmpdir" "$tmpdir:$PATH" "$cmd" > "$tmpdir/shim/$cmd"
+  chmod +x "$tmpdir/shim/$cmd"
+done
+set +e
+PATH="$tmpdir/shim:$tmpdir:$PATH" bash "$COLLECTOR" >/dev/null 2>&1
+argv_status=$?
+set -e
+assert_eq "shimmed collector exits successfully" "0" "$argv_status"
+assert_eq "collected the mock PRs" "true" "$(jq '.summary.open_prs > 0' "$mock_state" 2>/dev/null)"
+assert_eq "argv was recorded" "true" "$([ -s "$tmpdir/argv.log" ] && echo true || echo false)"
+assert_eq "URL reaches curl through its config" "true" \
+  "$(grep -q '^url = "https://mock.test/api/v1/user?' "$tmpdir/curl-config.log" 2>/dev/null && echo true || echo false)"
+for needle in mock.test testuser webapp api-server org/docs "user authentication" feature/auth fix/db-pool "CI Pipeline"; do
+  assert_eq "'$needle' never in argv" "0" "$(grep -c -- "$needle" "$tmpdir/argv.log" || true)"
+done
+rm -rf "$tmpdir"
+
+# ── Test 28: curl config quoting refuses directive injection (#12411) ──
+echo "Test 28: a newline in a config value cannot add a curl directive"
+eval "$(sed -n '/^config_quote() {/,/^}/p; /^request_config() {/,/^}/p' "$COLLECTOR")"
+GITEA_TOKEN=tok
+assert_eq "plain URL is quoted" '"https://h/a?b=1"' "$(config_quote 'https://h/a?b=1')"
+assert_eq "quotes and backslashes are escaped" '"a\"b\\c"' "$(config_quote 'a"b\c')"
+assert_eq "newline is refused" "refused" "$(config_quote $'x\nurl = file:///etc/passwd' >/dev/null && echo kept || echo refused)"
+assert_eq "carriage return is refused" "refused" "$(config_quote $'x\rurl = y' >/dev/null && echo kept || echo refused)"
+assert_eq "request_config writes nothing for an injected URL" "" "$(request_config $'x\nurl = y' 2>/dev/null)"
+unset GITEA_TOKEN
 
 echo ""
 echo "==========================================="

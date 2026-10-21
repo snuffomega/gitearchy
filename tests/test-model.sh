@@ -36,9 +36,8 @@ build_test_runs() {
 test_prs=$(build_test_prs)
 test_runs=$(build_test_runs)
 
-overview=$(jq -n \
-  --arg url "https://git.example.com" \
-  --arg user "testuser" \
+overview=$(url="https://git.example.com" user="testuser" \
+  carried_repos='[]' failed_resources='{}' jq -n \
   --arg ts "2026-09-15T10:00:00Z" \
   --argjson prs "$test_prs" \
   --argjson runs "$test_runs" \
@@ -48,8 +47,6 @@ overview=$(jq -n \
   --argjson repo_attempted 3 \
   --argjson incomplete false \
   --argjson carried false \
-  --argjson carried_repos "[]" \
-  --argjson failed_resources "{}" \
   -f "$JQ_SCRIPT")
 
 overview_json=$(echo "$overview" | jq -c .)
@@ -58,9 +55,8 @@ overview_json=$(echo "$overview" | jq -c .)
 overview2_prs=$(echo "$test_prs" | jq \
   --argjson ci_ok "$(cat "$MOCK_DIR/commit-status-success.json")" \
   '.[1]._commit_status = $ci_ok')
-overview2=$(jq -n \
-  --arg url "https://git.example.com" \
-  --arg user "testuser" \
+overview2=$(url="https://git.example.com" user="testuser" \
+  carried_repos='[]' failed_resources='{}' jq -n \
   --arg ts "2026-09-15T10:05:00Z" \
   --argjson prs "$overview2_prs" \
   --argjson runs "$test_runs" \
@@ -70,8 +66,6 @@ overview2=$(jq -n \
   --argjson repo_attempted 3 \
   --argjson incomplete false \
   --argjson carried false \
-  --argjson carried_repos "[]" \
-  --argjson failed_resources "{}" \
   -f "$JQ_SCRIPT")
 overview2_json=$(echo "$overview2" | jq -c .)
 
@@ -86,9 +80,8 @@ overview3_prs=$(echo "$overview2_prs" | jq '. + [{
   "_commit_status": {"state": "failure", "total_count": 1, "statuses": [{"context": "ci/build", "status": "failure", "description": "Build failed", "target_url": "", "created_at": "2026-09-15T10:06:00Z"}]},
   "_repo": "testuser/webapp"
 }]')
-overview3=$(jq -n \
-  --arg url "https://git.example.com" \
-  --arg user "testuser" \
+overview3=$(url="https://git.example.com" user="testuser" \
+  carried_repos='[]' failed_resources='{}' jq -n \
   --arg ts "2026-09-15T10:10:00Z" \
   --argjson prs "$overview3_prs" \
   --argjson runs "$test_runs" \
@@ -98,8 +91,6 @@ overview3=$(jq -n \
   --argjson repo_attempted 3 \
   --argjson incomplete false \
   --argjson carried false \
-  --argjson carried_repos "[]" \
-  --argjson failed_resources "{}" \
   -f "$JQ_SCRIPT")
 overview3_json=$(echo "$overview3" | jq -c .)
 
@@ -116,9 +107,8 @@ overview4_runs=$(echo "$test_runs" | jq '. + [
    "head_branch": "main", "event": "push", "html_url": "https://git.example.com/testuser/webapp/actions/runs/602",
    "run_started_at": "2026-09-15T10:07:00Z", "updated_at": "2026-09-15T10:08:00Z", "_repo": "testuser/webapp"}
 ]')
-overview4=$(jq -n \
-  --arg url "https://git.example.com" \
-  --arg user "testuser" \
+overview4=$(url="https://git.example.com" user="testuser" \
+  carried_repos='[]' failed_resources='{}' jq -n \
   --arg ts "2026-09-15T10:12:00Z" \
   --argjson prs "$test_prs" \
   --argjson runs "$overview4_runs" \
@@ -128,8 +118,6 @@ overview4=$(jq -n \
   --argjson repo_attempted 3 \
   --argjson incomplete false \
   --argjson carried false \
-  --argjson carried_repos "[]" \
-  --argjson failed_resources "{}" \
   -f "$JQ_SCRIPT")
 overview4_json=$(echo "$overview4" | jq -c .)
 
@@ -242,9 +230,12 @@ data = parseOverview(JSON.stringify($overview3_json));
 const notes3 = getNewNotifications(data, true, true);
 const newFailNotes = notes3.filter(n => n.type === "failure");
 assert("new PR failure: fires notification", true, newFailNotes.length > 0);
-assert("new PR failure: mentions PR 99", true, newFailNotes.some(n => n.message.indexOf("#99") !== -1));
-assert("notification markup is escaped", true,
-  newFailNotes.some(n => n.message.indexOf("New &lt;b&gt;broken&lt;/b&gt; PR &amp; co") !== -1));
+assert("new PR failure: mentions PR 99", true, newFailNotes.some(n => n.key === "ci:testuser/webapp:99"));
+const noteText = notificationText(notes3);
+assert("notification text counts the new failure", true, /^\d+ new failures?/.test(noteText));
+assert("notification text names no repo or title", false, /webapp|api-server|broken|#99/.test(noteText));
+assert("notification text counts each kind", "2 new failures, 1 review request",
+  notificationText([{ type: "failure" }, { type: "failure" }, { type: "review" }]));
 
 console.log("");
 console.log("Test: Disabled notification kinds stay silent but remember state");
@@ -265,7 +256,7 @@ data = parseOverview(JSON.stringify($overview3_json));
 const hiddenWebapp = repoSet("testuser/webapp");
 assert("webapp hidden from the bar", true, getBarSummary(data, hiddenWebapp).total < getBarSummary(data, {}).total);
 assert("hidden webapp PR #99 still notifies", true,
-  getNewNotifications(data, true, true).some(n => n.message.indexOf("#99") !== -1));
+  getNewNotifications(data, true, true).some(n => n.key === "ci:testuser/webapp:99"));
 
 console.log("");
 console.log("Test: A partially collected repo neither fires nor forgets");
@@ -285,16 +276,16 @@ getNewNotifications(data, true, true);
 // webapp degraded while PR #99 first appears failed: stays quiet
 data = parseOverview(withMeta($overview3_json, { stale: true, failed_resources: { "testuser/webapp": ["status:99"] } }));
 assert("degraded repo: new failure is quiet", 0,
-  getNewNotifications(data, true, true).filter(n => n.message.indexOf("#99") !== -1).length);
+  getNewNotifications(data, true, true).filter(n => n.key === "ci:testuser/webapp:99").length);
 data = parseOverview(JSON.stringify($overview3_json));
 assert("recovered repo: failure first seen while degraded fires on recovery", 1,
-  getNewNotifications(data, true, true).filter(n => n.message.indexOf("#99") !== -1).length);
+  getNewNotifications(data, true, true).filter(n => n.key === "ci:testuser/webapp:99").length);
 // PR #99 vanishes while webapp is degraded, then returns once collection recovers
 data = parseOverview(withMeta(withoutPr($overview3_json, 99), { stale: true, failed_resources: { "testuser/webapp": ["prs"] } }));
 getNewNotifications(data, true, true);
 data = parseOverview(JSON.stringify($overview3_json));
 assert("item missing while degraded does not re-alert on recovery", 0,
-  getNewNotifications(data, true, true).filter(n => n.message.indexOf("#99") !== -1).length);
+  getNewNotifications(data, true, true).filter(n => n.key === "ci:testuser/webapp:99").length);
 
 console.log("");
 console.log("Test: Other repos keep notifying while one repo is degraded");
@@ -303,7 +294,7 @@ resetNotifications();
 getNewNotifications(data, true, true);
 data = parseOverview(withMeta($overview3_json, { stale: true, failed_resources: { "testuser/api-server": ["runs"] } }));
 assert("healthy webapp still fires while api-server is degraded", true,
-  getNewNotifications(data, true, true).some(n => n.message.indexOf("#99") !== -1));
+  getNewNotifications(data, true, true).some(n => n.key === "ci:testuser/webapp:99"));
 
 console.log("");
 console.log("Test: A wholly re-emitted stale snapshot fires nothing");
@@ -319,12 +310,15 @@ data = parseOverview(JSON.stringify($overview4_json));
 resetNotifications();
 getNewNotifications(data, false, false);
 _notifyState = {};
-const runNotes = getNewNotifications(data, true, false).filter(n => n.message.indexOf("Job failed") === 0);
-assert("runs: legacy status failure notifies", true, runNotes.some(n => n.message.indexOf("Deploy") !== -1));
-assert("runs: lifecycle conclusion failure notifies", true, runNotes.some(n => n.message.indexOf("release") !== -1));
-assert("runs: cancelled run does not notify", false, runNotes.some(n => n.message.indexOf("lint") !== -1));
-assert("runs: successful run does not notify", false, runNotes.some(n => n.message.indexOf("Job failed: test ") === 0));
-const runRepeat = getNewNotifications(data, true, false).filter(n => n.message.indexOf("Job failed") === 0);
+const runsByKey = {};
+sectionItems(data, "completed", all).forEach(r => { runsByKey["run:" + r.repo + ":" + r.id] = r; });
+const runNotes = getNewNotifications(data, true, false).filter(n => n.key.indexOf("run:") === 0);
+const runWorkflows = runNotes.map(n => runsByKey[n.key].workflow);
+assert("runs: legacy status failure notifies", true, runWorkflows.some(w => w.indexOf("Deploy") !== -1));
+assert("runs: lifecycle conclusion failure notifies", true, runWorkflows.some(w => w.indexOf("release") !== -1));
+assert("runs: cancelled run does not notify", false, runWorkflows.some(w => w.indexOf("lint") !== -1));
+assert("runs: successful run does not notify", false, runWorkflows.some(w => w === "test"));
+const runRepeat = getNewNotifications(data, true, false).filter(n => n.key.indexOf("run:") === 0);
 assert("runs: no repeat for same failed run", 0, runRepeat.length);
 
 console.log("");

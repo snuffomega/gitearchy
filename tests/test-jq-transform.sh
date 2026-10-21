@@ -54,9 +54,8 @@ assert_gt() {
 
 run_jq() {
   local test_prs="$1" test_runs="$2"
-  jq -n \
-    --arg url "https://git.example.com" \
-    --arg user "testuser" \
+  url="https://git.example.com" user="testuser" \
+    carried_repos='[]' failed_resources='{}' jq -n \
     --arg ts "2026-09-15T10:00:00Z" \
     --argjson prs "$test_prs" \
     --argjson runs "$test_runs" \
@@ -66,8 +65,6 @@ run_jq() {
     --argjson repo_attempted 3 \
     --argjson incomplete false \
     --argjson carried false \
-    --argjson carried_repos "[]" \
-    --argjson failed_resources "{}" \
     -f "$JQ_SCRIPT"
 }
 

@@ -1,10 +1,10 @@
 # gitea-collect.jq — Transform raw API data into the overview structure
 # Supports Gitea >= 1.19. Actions runs require >= 1.20.
-# Input: --arg url, --arg user, --arg ts,
-#        --argjson/--slurpfile prs, --argjson/--slurpfile runs, --argjson repo_count,
-#        --argjson max_stale, --argjson repo_failed, --argjson repo_attempted,
-#        --argjson incomplete, --argjson carried, --argjson carried_repos,
-#        --argjson failed_resources
+# Input: environment url, user, carried_repos (JSON), failed_resources (JSON);
+#        --arg ts, --argjson/--slurpfile prs, --argjson/--slurpfile runs,
+#        --argjson repo_count, --argjson max_stale, --argjson repo_failed,
+#        --argjson repo_attempted, --argjson incomplete, --argjson carried.
+# Private values come through the environment, never argv (#12411).
 
 # Latest effective review per reviewer: last non-COMMENT, non-DISMISSED review wins.
 # This prevents a stale REQUEST_CHANGES from blocking after the reviewer approves.
@@ -129,6 +129,11 @@ def run_status_bucket:
        or .status == "timed_out" or .status == "skipped" then "failed"
   else "other"
   end;
+
+$ENV.url as $url |
+$ENV.user as $user |
+($ENV.carried_repos | fromjson) as $carried_repos |
+($ENV.failed_resources | fromjson) as $failed_resources |
 
 # Transform PRs
 ($prs | unwrap_slurpfile | map({

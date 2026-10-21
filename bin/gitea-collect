@@ -37,8 +37,8 @@ atomic_write() {
 # --- Error: preserve last-good data, write error alongside ---
 die() {
   local message="$1" err
-  err=$(jq -nc --arg error "$message" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{error: $error, ts: $ts}')
+  err=$(error="$message" jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{error: $ENV.error, ts: $ts}')
   atomic_write "$STATE_DIR/last-error.json" "$err"
   if [ ! -f "$OUTPUT" ]; then
     atomic_write "$OUTPUT" "$err"
@@ -62,18 +62,32 @@ GITEA_TOKEN="${GITEA_TOKEN:-}"
 
 GITEA_URL="${GITEA_URL%/}"
 
-# curl config carrying the auth header. printf is a builtin, so the token
-# reaches curl through a pipe and never appears in any process's argv (#20).
-auth_config() { printf 'header = "Authorization: token %s"\n' "$GITEA_TOKEN"; }
+# Private values travel by pipe or environment, never argv: other local users
+# can read any process's /proc/<pid>/cmdline (#20, #12411).
+
+# A value quoted for a curl config file. Control characters are refused: a
+# newline would start a new config directive.
+config_quote() {
+  [[ $1 == *[[:cntrl:]]* ]] && return 1
+  local v=${1//\\/\\\\}; printf '"%s"' "${v//\"/\\\"}"
+}
+
+# curl config carrying the auth header and the URL. printf is a builtin, so
+# both reach curl through a pipe.
+request_config() {
+  local header url
+  header=$(config_quote "Authorization: token $GITEA_TOKEN") || return 1
+  url=$(config_quote "$1") || return 1
+  printf 'header = %s\nurl = %s\n' "$header" "$url"
+}
 
 # One authenticated request; prints the body, then the HTTP code on its own
 # line. -q (must come first) ignores ~/.curlrc, which could trace the token or
 # disable TLS checks; -g keeps URL glob characters literal (#26).
 gitea_curl() {
   curl -q -g -sS --max-time 15 -w '\n%{http_code}' \
-    -K <(auth_config) \
-    -H "Accept: application/json" \
-    "$1" 2>/dev/null
+    -K <(request_config "$1") \
+    -H "Accept: application/json" 2>/dev/null
 }
 
 # A name, number or SHA that is safe as one URL path segment.
@@ -324,7 +338,7 @@ for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
             '.[$idx]._reviews = $revs[0] | .[$idx]._commit_status = $cs[0]')
         done
 
-        prs=$(echo "$prs" | jq --arg fn "${owner}/${repo}" '[.[] | . + {"_repo": $fn}]')
+        prs=$(echo "$prs" | fn="${owner}/${repo}" jq '[.[] | . + {"_repo": $ENV.fn}]')
       else
         prs="[]"
         echo "prs" >> "$tmpdir/resources_${idx}"
@@ -346,11 +360,11 @@ for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
 
     if [ "$runs_http_code" = "200" ] && [ -n "$runs_raw" ] && \
        echo "$runs_raw" | jq -e '.workflow_runs | type == "array"' >/dev/null 2>&1; then
-      echo "$runs_raw" | jq --arg fn "${owner}/${repo}" \
-        '[.workflow_runs[]? | . + {"_repo": $fn}]' > "$tmpdir/runs_${idx}.json"
+      echo "$runs_raw" | fn="${owner}/${repo}" jq \
+        '[.workflow_runs[]? | . + {"_repo": $ENV.fn}]' > "$tmpdir/runs_${idx}.json"
     elif [ "$runs_http_code" = "200" ] && [ -n "$runs_raw" ] && echo "$runs_raw" | jq -e 'type == "array"' >/dev/null 2>&1; then
-      echo "$runs_raw" | jq --arg fn "${owner}/${repo}" \
-        '[.[]? | . + {"_repo": $fn}]' > "$tmpdir/runs_${idx}.json"
+      echo "$runs_raw" | fn="${owner}/${repo}" jq \
+        '[.[]? | . + {"_repo": $ENV.fn}]' > "$tmpdir/runs_${idx}.json"
     else
       echo "[]" > "$tmpdir/runs_${idx}.json"
       if [ "$runs_http_code" != "404" ]; then
@@ -418,17 +432,17 @@ if [ -f "$tmpdir/repos_list" ]; then
     if [ -f "$tmpdir/resources_${idx}" ]; then
       while read -r res; do
         case "$res" in
-          prs) failed_pr_repos=$(echo "$failed_pr_repos" | jq --arg fn "$fn" '. + [$fn] | unique') ;;
-          runs) failed_run_repos=$(echo "$failed_run_repos" | jq --arg fn "$fn" '. + [$fn] | unique') ;;
+          prs) failed_pr_repos=$(echo "$failed_pr_repos" | fn="$fn" jq '. + [$ENV.fn] | unique') ;;
+          runs) failed_run_repos=$(echo "$failed_run_repos" | fn="$fn" jq '. + [$ENV.fn] | unique') ;;
           review:*)
             pr_id="${res#*:}"
-            failed_review_keys=$(echo "$failed_review_keys" | jq --arg fn "$fn" --argjson id "$pr_id" \
-              '. + [{repo: $fn, id: $id}] | unique_by([.repo, .id])')
+            failed_review_keys=$(echo "$failed_review_keys" | fn="$fn" jq --argjson id "$pr_id" \
+              '. + [{repo: $ENV.fn, id: $id}] | unique_by([.repo, .id])')
             ;;
           status:*)
             pr_id="${res#*:}"
-            failed_status_keys=$(echo "$failed_status_keys" | jq --arg fn "$fn" --argjson id "$pr_id" \
-              '. + [{repo: $fn, id: $id}] | unique_by([.repo, .id])')
+            failed_status_keys=$(echo "$failed_status_keys" | fn="$fn" jq --argjson id "$pr_id" \
+              '. + [{repo: $ENV.fn, id: $id}] | unique_by([.repo, .id])')
             ;;
         esac
         lift_resources=$(echo "$lift_resources" | jq --arg r "$res" '. + [$r]')
@@ -438,7 +452,7 @@ if [ -f "$tmpdir/repos_list" ]; then
     all_prs=$(echo "$all_prs" "$repo_prs" | jq -s '.[0] + .[1]')
     all_runs=$(echo "$all_runs" "$repo_runs" | jq -s '.[0] + .[1]')
     if [ "$lift_resources" != "[]" ]; then
-      failed_meta=$(echo "$failed_meta" | jq --arg fn "$fn" --argjson bad "$lift_resources" '.[$fn] = $bad')
+      failed_meta=$(echo "$failed_meta" | fn="$fn" jq --argjson bad "$lift_resources" '.[$ENV.fn] = $bad')
     fi
     idx=$((idx+1))
   done < "$tmpdir/repos_list"
@@ -454,43 +468,43 @@ fi
 
 if [ "$can_carry" = "true" ]; then
   for fn in $(echo "$failed_pr_repos" | jq -r '.[]'); do
-    if jq -e --arg fn "$fn" 'any(.sections.all_prs[]?; .repo == $fn)' "$OUTPUT" >/dev/null; then
-      carry_pr_repos=$(echo "$carry_pr_repos" | jq --arg fn "$fn" '. + [$fn] | unique')
+    if fn="$fn" jq -e 'any(.sections.all_prs[]?; .repo == $ENV.fn)' "$OUTPUT" >/dev/null; then
+      carry_pr_repos=$(echo "$carry_pr_repos" | fn="$fn" jq '. + [$ENV.fn] | unique')
     fi
   done
   for fn in $(echo "$failed_run_repos" | jq -r '.[]'); do
-    if jq -e --arg fn "$fn" 'any((.sections.running[]?, .sections.recently_completed[]?); .repo == $fn)' "$OUTPUT" >/dev/null; then
-      carry_run_repos=$(echo "$carry_run_repos" | jq --arg fn "$fn" '. + [$fn] | unique')
+    if fn="$fn" jq -e 'any((.sections.running[]?, .sections.recently_completed[]?); .repo == $ENV.fn)' "$OUTPUT" >/dev/null; then
+      carry_run_repos=$(echo "$carry_run_repos" | fn="$fn" jq '. + [$ENV.fn] | unique')
     fi
   done
   for key in $(echo "$failed_review_keys" | jq -r '.[] | @base64'); do
     decoded_key=$(echo "$key" | base64 -d)
     fn=$(echo "$decoded_key" | jq -r '.repo')
     pr_id=$(echo "$decoded_key" | jq -r '.id')
-    lift_review=$(jq -c --arg fn "$fn" --argjson id "$pr_id" \
-      'first(.sections.all_prs[]? | select(.repo == $fn and .id == $id) | .reviews) // null' "$OUTPUT")
-    if [ "$lift_review" != "null" ] && echo "$all_prs" | jq -e --arg fn "$fn" --argjson id "$pr_id" \
-      'any(.[]; ._repo == $fn and .number == $id)' >/dev/null; then
+    lift_review=$(fn="$fn" jq -c --argjson id "$pr_id" \
+      'first(.sections.all_prs[]? | select(.repo == $ENV.fn and .id == $id) | .reviews) // null' "$OUTPUT")
+    if [ "$lift_review" != "null" ] && echo "$all_prs" | fn="$fn" jq -e --argjson id "$pr_id" \
+      'any(.[]; ._repo == $ENV.fn and .number == $id)' >/dev/null; then
       printf '%s\n' "$lift_review" > "$tmpdir/lift.json"
-      all_prs=$(echo "$all_prs" | jq --arg fn "$fn" --argjson id "$pr_id" --slurpfile lifts "$tmpdir/lift.json" \
-        '$lifts[0] as $lift | map(if ._repo == $fn and .number == $id then . + {"_review_summary": $lift} else . end)')
-      carry_review_keys=$(echo "$carry_review_keys" | jq --arg fn "$fn" --argjson id "$pr_id" \
-        '. + [{repo: $fn, id: $id}] | unique_by([.repo, .id])')
+      all_prs=$(echo "$all_prs" | fn="$fn" jq --argjson id "$pr_id" --slurpfile lifts "$tmpdir/lift.json" \
+        '$lifts[0] as $lift | map(if ._repo == $ENV.fn and .number == $id then . + {"_review_summary": $lift} else . end)')
+      carry_review_keys=$(echo "$carry_review_keys" | fn="$fn" jq --argjson id "$pr_id" \
+        '. + [{repo: $ENV.fn, id: $id}] | unique_by([.repo, .id])')
     fi
   done
   for key in $(echo "$failed_status_keys" | jq -r '.[] | @base64'); do
     decoded_key=$(echo "$key" | base64 -d)
     fn=$(echo "$decoded_key" | jq -r '.repo')
     pr_id=$(echo "$decoded_key" | jq -r '.id')
-    lift_ci=$(jq -c --arg fn "$fn" --argjson id "$pr_id" \
-      'first(.sections.all_prs[]? | select(.repo == $fn and .id == $id) | .ci) // null' "$OUTPUT")
-    if [ "$lift_ci" != "null" ] && echo "$all_prs" | jq -e --arg fn "$fn" --argjson id "$pr_id" \
-      'any(.[]; ._repo == $fn and .number == $id)' >/dev/null; then
+    lift_ci=$(fn="$fn" jq -c --argjson id "$pr_id" \
+      'first(.sections.all_prs[]? | select(.repo == $ENV.fn and .id == $id) | .ci) // null' "$OUTPUT")
+    if [ "$lift_ci" != "null" ] && echo "$all_prs" | fn="$fn" jq -e --argjson id "$pr_id" \
+      'any(.[]; ._repo == $ENV.fn and .number == $id)' >/dev/null; then
       printf '%s\n' "$lift_ci" > "$tmpdir/lift.json"
-      all_prs=$(echo "$all_prs" | jq --arg fn "$fn" --argjson id "$pr_id" --slurpfile lifts "$tmpdir/lift.json" \
-        '$lifts[0] as $lift | map(if ._repo == $fn and .number == $id then . + {"_ci_summary": $lift} else . end)')
-      carry_status_keys=$(echo "$carry_status_keys" | jq --arg fn "$fn" --argjson id "$pr_id" \
-        '. + [{repo: $fn, id: $id}] | unique_by([.repo, .id])')
+      all_prs=$(echo "$all_prs" | fn="$fn" jq --argjson id "$pr_id" --slurpfile lifts "$tmpdir/lift.json" \
+        '$lifts[0] as $lift | map(if ._repo == $ENV.fn and .number == $id then . + {"_ci_summary": $lift} else . end)')
+      carry_status_keys=$(echo "$carry_status_keys" | fn="$fn" jq --argjson id "$pr_id" \
+        '. + [{repo: $ENV.fn, id: $id}] | unique_by([.repo, .id])')
     fi
   done
 fi
@@ -514,9 +528,8 @@ fi
 printf '%s\n' "$all_prs" > "$tmpdir/all_prs.json"
 printf '%s\n' "$all_runs" > "$tmpdir/all_runs.json"
 
-overview=$(jq -n \
-  --arg url "$GITEA_URL" \
-  --arg user "$username" \
+overview=$(url="$GITEA_URL" user="$username" \
+  carried_repos="$carried_repos" failed_resources="$failed_meta" jq -n \
   --arg ts "$now_ts" \
   --slurpfile prs "$tmpdir/all_prs.json" \
   --slurpfile runs "$tmpdir/all_runs.json" \
@@ -526,33 +539,31 @@ overview=$(jq -n \
   --argjson repo_attempted "$repo_attempted" \
   --argjson incomplete "$incomplete" \
   --argjson carried "$carried" \
-  --argjson failed_resources "$failed_meta" \
-  --argjson carried_repos "$carried_repos" \
   -f "$JQ_SCRIPT")
 
 # Post-transform splice: previous data is already transformed. Replace only
 # the resource that failed, then rebuild every derived section and count.
 if [ "$carried" = "true" ]; then
   for fn in $(echo "$carry_pr_repos" | jq -r '.[]'); do
-    lift_prs=$(jq -c --arg fn "$fn" '[.sections.all_prs[]? | select(.repo == $fn)]' "$OUTPUT")
+    lift_prs=$(fn="$fn" jq -c '[.sections.all_prs[]? | select(.repo == $ENV.fn)]' "$OUTPUT")
     printf '%s\n' "$lift_prs" > "$tmpdir/lift.json"
-    overview=$(echo "$overview" | jq --arg fn "$fn" --slurpfile lifts "$tmpdir/lift.json" \
-      '$lifts[0] as $lift | .sections.all_prs = ([.sections.all_prs[] | select(.repo != $fn)] + $lift)')
+    overview=$(echo "$overview" | fn="$fn" jq --slurpfile lifts "$tmpdir/lift.json" \
+      '$lifts[0] as $lift | .sections.all_prs = ([.sections.all_prs[] | select(.repo != $ENV.fn)] + $lift)')
   done
   for fn in $(echo "$carry_run_repos" | jq -r '.[]'); do
-    lift_runs=$(jq -c --arg fn "$fn" '(.sections.running // []) + (.sections.recently_completed // []) | map(select(.repo == $fn))' "$OUTPUT")
+    lift_runs=$(fn="$fn" jq -c '(.sections.running // []) + (.sections.recently_completed // []) | map(select(.repo == $ENV.fn))' "$OUTPUT")
     printf '%s\n' "$lift_runs" > "$tmpdir/lift.json"
-    overview=$(echo "$overview" | jq --arg fn "$fn" --slurpfile lifts "$tmpdir/lift.json" '
+    overview=$(echo "$overview" | fn="$fn" jq --slurpfile lifts "$tmpdir/lift.json" '
       $lifts[0] as $lift |
-      .sections.running = ([.sections.running[] | select(.repo != $fn)] + [$lift[] | select(.bucket == "running")]) |
-      .sections.recently_completed = ([.sections.recently_completed[] | select(.repo != $fn)] + [$lift[] | select(.bucket != "running")])
+      .sections.running = ([.sections.running[] | select(.repo != $ENV.fn)] + [$lift[] | select(.bucket == "running")]) |
+      .sections.recently_completed = ([.sections.recently_completed[] | select(.repo != $ENV.fn)] + [$lift[] | select(.bucket != "running")])
     ')
   done
-  overview=$(echo "$overview" | jq --arg user "$username" '
+  overview=$(echo "$overview" | user="$username" jq '
     .sections.all_prs |= (unique_by([.repo, .id]) | sort_by(.updated) | reverse) |
     .sections.attention = [.sections.all_prs[] | select(.needs_attention)] |
-    .sections.my_prs = [.sections.all_prs[] | select(.author == $user)] |
-    .sections.review_queue = [.sections.all_prs[] | select(.requested_reviewers | index($user) != null)] |
+    .sections.my_prs = [.sections.all_prs[] | select(.author == $ENV.user)] |
+    .sections.review_queue = [.sections.all_prs[] | select(.requested_reviewers | index($ENV.user) != null)] |
     .sections.running |= (unique_by([.repo, .id]) | sort_by(.updated) | reverse) |
     .sections.recently_completed |= (unique_by([.repo, .id]) | sort_by(.updated) | reverse | .[0:20]) |
     .summary.open_prs = (.sections.all_prs | length) |

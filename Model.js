@@ -49,11 +49,6 @@ function repoUrl(repo, base) {
     return safeUrl(base + "/" + repo, base);
 }
 
-// notify-send bodies honour a markup subset; show API text literally (#26).
-function escapeMarkup(text) {
-    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
 function resetNotifications() {
     _initialLoad = true;
     _notifyState = {};
@@ -194,8 +189,7 @@ function _notifyCandidates(sections) {
         var pr = prs[i];
         out.push({
             key: "ci:" + pr.repo + ":" + pr.id, repo: pr.repo, kind: "failure",
-            status: pr.status_label, fire: pr.status_label === "ci_failed",
-            message: "CI failed on " + pr.repo + " #" + pr.id + ": " + pr.title
+            status: pr.status_label, fire: pr.status_label === "ci_failed"
         });
     }
     var runs = sections.recently_completed || [];
@@ -203,8 +197,7 @@ function _notifyCandidates(sections) {
         var run = runs[j];
         out.push({
             key: "run:" + run.repo + ":" + run.id, repo: run.repo, kind: "failure",
-            status: runState(run), fire: runFailed(run),
-            message: "Job failed: " + run.workflow + " on " + run.repo
+            status: runState(run), fire: runFailed(run)
         });
     }
     var queue = sections.review_queue || [];
@@ -212,8 +205,7 @@ function _notifyCandidates(sections) {
         var rpr = queue[k];
         out.push({
             key: "review:" + rpr.repo + ":" + rpr.id, repo: rpr.repo, kind: "review",
-            status: "review_requested", fire: true,
-            message: "Review requested: " + rpr.repo + " #" + rpr.id + ": " + rpr.title
+            status: "review_requested", fire: true
         });
     }
     return out;
@@ -244,7 +236,7 @@ function getNewNotifications(data, notifyFailure, notifyReview) {
         if (degraded[c.repo] && !_initialLoad) continue;
         var quiet = _initialLoad || wholeStale || !enabled;
         if (!quiet && c.fire && (!prev || prev.status !== c.status)) {
-            notes.push({ type: c.kind, message: escapeMarkup(c.message) });
+            notes.push({ type: c.kind, key: c.key });
         }
         next[c.key] = { status: c.status, repo: c.repo, notifiedAt: now };
     }
@@ -260,6 +252,20 @@ function getNewNotifications(data, notifyFailure, notifyReview) {
     _initialLoad = false;
     _notifyState = next;
     return notes;
+}
+
+// The desktop notification body. It carries counts only: notify-send takes the
+// body in argv, which other local users can read from /proc (marketplace #12411).
+function notificationText(notes) {
+    var failures = 0, reviews = 0;
+    for (var i = 0; i < notes.length; i++) {
+        if (notes[i].type === "review") reviews++;
+        else failures++;
+    }
+    var parts = [];
+    if (failures) parts.push(failures + (failures === 1 ? " new failure" : " new failures"));
+    if (reviews) parts.push(reviews + (reviews === 1 ? " review request" : " review requests"));
+    return parts.join(", ");
 }
 
 function timeAgo(isoString) {
