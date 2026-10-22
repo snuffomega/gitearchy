@@ -929,6 +929,35 @@ assert_eq "carriage return is refused" "refused" "$(config_quote $'x\rurl = y' >
 assert_eq "request_config writes nothing for an injected URL" "" "$(request_config $'x\nurl = y' 2>/dev/null)"
 unset GITEA_TOKEN
 
+# ── Test 29: an endless response body is cut off, not buffered (#12411) ──
+echo "Test 29: gitea_curl stops an oversized body mid-stream"
+if command -v python3 >/dev/null; then
+  big_dir=$(mktemp -d)
+  python3 -I -c '
+import http.server, socketserver, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(s):
+        s.send_response(200); s.end_headers()
+        try:
+            while True: s.wfile.write(b"x" * 65536)
+        except Exception: pass
+    def log_message(s, *a): pass
+srv = socketserver.TCPServer(("127.0.0.1", 0), H)
+print(srv.server_address[1], flush=True)
+srv.handle_request()' > "$big_dir/port" &
+  big_pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$big_dir/port" ] && break; sleep 0.2; done
+  eval "$(sed -n '/^config_quote() {/,/^}/p; /^request_config() {/,/^}/p; /^gitea_curl() {/,/^}/p' "$COLLECTOR")"
+  GITEA_TOKEN=tok
+  bytes=$( { gitea_curl "http://127.0.0.1:$(cat "$big_dir/port")/" || true; } | wc -c)
+  assert_eq "endless body is cut off at the cap" "true" "$([ "$bytes" -le 9000000 ] && echo true || echo false)"
+  unset GITEA_TOKEN
+  kill "$big_pid" 2>/dev/null || true; wait "$big_pid" 2>/dev/null || true
+  rm -rf "$big_dir"
+else
+  echo "  SKIP: python3 not available"
+fi
+
 echo ""
 echo "==========================================="
 echo "Results: $PASS passed, $FAIL failed"

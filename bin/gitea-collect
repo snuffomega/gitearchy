@@ -84,8 +84,10 @@ request_config() {
 # One authenticated request; prints the body, then the HTTP code on its own
 # line. -q (must come first) ignores ~/.curlrc, which could trace the token or
 # disable TLS checks; -g keeps URL glob characters literal (#26).
+# --max-filesize stops an oversized or endless body mid-stream, so a hostile
+# server can't exhaust memory before the timeout (#12411).
 gitea_curl() {
-  curl -q -g -sS --max-time 15 -w '\n%{http_code}' \
+  curl -q -g -sS --max-time 15 --max-filesize 8388608 -w '\n%{http_code}' \
     -K <(request_config "$1") \
     -H "Accept: application/json" 2>/dev/null
 }
